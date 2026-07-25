@@ -29,7 +29,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
 
   try {
     // 确定期次
-    let iteration = options.iteration;
+    let iteration: string | undefined = options.iteration;
 
     if (!iteration) {
       // 尝试自动检测
@@ -45,10 +45,12 @@ export async function initCommand(options: InitOptions): Promise<void> {
             validate: (val: string) => val.trim() ? true : '期次名称不能为空',
           },
         ]);
-        iteration = answer.iteration;
+        iteration = answer.iteration as string;
         spinner.start();
       }
     }
+
+    const targetIteration = iteration;
 
     // 创建目录结构
     createDirectoryStructure(spectestDir, iteration);
@@ -67,7 +69,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
 /**
  * 自动检测期次
  */
-function detectIteration(projectRoot: string): string | null {
+function detectIteration(projectRoot: string): string | undefined {
   // 从 .speccore/local/context.json 读取
   const contextPath = path.join(projectRoot, '.speccore', 'local', 'context.json');
   if (fs.existsSync(contextPath)) {
@@ -87,7 +89,7 @@ function detectIteration(projectRoot: string): string | null {
     }
   }
 
-  return null;
+  return undefined;
 }
 
 /**

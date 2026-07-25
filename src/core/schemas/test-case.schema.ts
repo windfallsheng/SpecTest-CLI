@@ -59,7 +59,7 @@ export const TestCaseSchema = z.object({
     expected: z.string().min(1),
   })).default([]),
   /** 测试数据 */
-  testData: z.record(z.unknown()).optional(),
+  testData: z.record(z.string(), z.unknown()).optional(),
   /** 标签 */
   tags: z.array(z.string()).default([]),
   /** 预估执行时间（分钟） */
