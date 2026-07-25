@@ -1,0 +1,53 @@
+{
+  "name": "spectest",
+  "version": "0.1.0",
+  "description": "SpecTest - 测试底座，让 AI 从需求自动生成测试用例",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "spectest": "./bin/spectest"
+  },
+  "scripts": {
+    "build": "tsc && cp -r src/locales dist/",
+    "watch": "tsc --watch",
+    "dev": "ts-node src/cli.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint src/**/*.ts"
+  },
+  "files": [
+    "dist",
+    "bin"
+  ],
+  "dependencies": {
+    "commander": "^11.1.0",
+    "fs-extra": "^11.2.0",
+    "inquirer": "^14.0.2",
+    "js-yaml": "^4.1.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/fs-extra": "^11.0.4",
+    "@types/inquirer": "^9.0.10",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^20.10.5",
+    "@vitest/coverage-v8": "^4.1.10",
+    "typescript": "^5.3.3",
+    "vitest": "^4.1.10"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "spec",
+    "test",
+    "sdd",
+    "spec-driven-development",
+    "ai",
+    "testing",
+    "cli"
+  ],
+  "author": "",
+  "license": "MIT"
+}

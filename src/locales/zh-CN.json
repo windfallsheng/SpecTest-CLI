@@ -1,0 +1,51 @@
+{
+  "app": {
+    "name": "SpecTest",
+    "description": "测试底座 - 让 AI 从需求自动生成测试用例",
+    "tagline": "Test by Spec, Not by Guess."
+  },
+  "cmd": {
+    "init": {
+      "start": "正在初始化测试项目...",
+      "success": "测试项目初始化完成",
+      "fail": "初始化失败",
+      "already_exists": "测试项目已存在"
+    },
+    "gen": {
+      "start": "正在生成测试用例...",
+      "reading_spec": "正在读取需求规格...",
+      "generating": "正在为 {{count}} 个需求生成测试用例...",
+      "saving": "正在保存测试套件...",
+      "success": "测试用例生成完成！共生成 {{count}} 个用例",
+      "no_ac": "未找到验收标准（AC），无法生成测试用例",
+      "no_requirements": "期次 {{iteration}} 中没有找到任何需求",
+      "skipped": "{{count}} 个需求因缺少 AC 被跳过"
+    },
+    "gap": {
+      "start": "正在分析测试覆盖缺口...",
+      "analyzing": "正在对比需求与测试用例...",
+      "success": "覆盖分析完成，覆盖率：{{rate}}%",
+      "perfect": "✅ 覆盖完整！所有验收标准已覆盖",
+      "gaps_found": "⚠️ 发现 {{count}} 个覆盖缺口",
+      "risks": "🔴 {{count}} 个高风险项需要关注"
+    },
+    "run": {
+      "start": "正在执行测试套件...",
+      "executing": "执行中：{{current}}/{{total}}",
+      "success": "测试执行完成：通过 {{passed}}，失败 {{failed}}",
+      "no_suite": "未找到测试套件 {{suite}}"
+    },
+    "report": {
+      "start": "正在生成测试报告...",
+      "success": "报告已保存到：{{path}}"
+    },
+    "status": {
+      "no_project": "未找到测试项目"
+    }
+  },
+  "common": {
+    "not_initialized": "未找到 .spectest 项目配置。请先运行 spectest init 初始化测试项目。",
+    "operation_cancelled": "操作已取消",
+    "press_enter": "按 Enter 继续..."
+  }
+}

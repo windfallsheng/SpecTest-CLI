@@ -1,0 +1,51 @@
+{
+  "app": {
+    "name": "SpecTest",
+    "description": "Test Base - Auto-generate test cases from Specs with AI",
+    "tagline": "Test by Spec, Not by Guess."
+  },
+  "cmd": {
+    "init": {
+      "start": "Initializing test project...",
+      "success": "Test project initialized successfully",
+      "fail": "Initialization failed",
+      "already_exists": "Test project already exists"
+    },
+    "gen": {
+      "start": "Generating test cases...",
+      "reading_spec": "Reading requirement specs...",
+      "generating": "Generating test cases for {{count}} requirements...",
+      "saving": "Saving test suite...",
+      "success": "Test case generation complete! {{count}} cases generated",
+      "no_ac": "No acceptance criteria (AC) found, unable to generate test cases",
+      "no_requirements": "No requirements found in iteration {{iteration}}",
+      "skipped": "{{count}} requirements skipped due to missing AC"
+    },
+    "gap": {
+      "start": "Analyzing test coverage gaps...",
+      "analyzing": "Comparing requirements with test cases...",
+      "success": "Coverage analysis complete, coverage rate: {{rate}}%",
+      "perfect": "✅ Full coverage! All acceptance criteria covered",
+      "gaps_found": "⚠️ {{count}} coverage gaps found",
+      "risks": "🔴 {{count}} high-risk items need attention"
+    },
+    "run": {
+      "start": "Executing test suite...",
+      "executing": "Running: {{current}}/{{total}}",
+      "success": "Test execution complete: {{passed}} passed, {{failed}} failed",
+      "no_suite": "Test suite {{suite}} not found"
+    },
+    "report": {
+      "start": "Generating test report...",
+      "success": "Report saved to: {{path}}"
+    },
+    "status": {
+      "no_project": "No test project found"
+    }
+  },
+  "common": {
+    "not_initialized": "No .spectest project configuration found. Please run spectest init first.",
+    "operation_cancelled": "Operation cancelled",
+    "press_enter": "Press Enter to continue..."
+  }
+}
