@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.3 (2026-10-08)
+
+- Owner resolution gains a third fact source: the SpecCore unit-level declaration (`010-requirements/features/{unit}/_matrix.md` owners section, confirmed) — aligned with SpecCore v8.3.302 owner-first design; determined at gen time without waiting for taskify
+- Resolution priority: 030-tasks task owner → unit-level declaration → STAFFING unique direction member (report-as-is never-guess rule unchanged)
+
 ## 0.3.2 (2026-10-08)
 
 - New `export` command (alias ex): export case collections — multi-unit select / all / filter by owner, in md / yaml / json, landing in `.spectest/exports/`

@@ -1,6 +1,6 @@
 {
   "name": "spectest-cli",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "SpecTest - Test by Spec, Not by Guess. Spec-driven test case generation, execution pipeline and quality gate for the Spec* ecosystem.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

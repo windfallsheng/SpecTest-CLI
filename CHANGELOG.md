@@ -1,5 +1,10 @@
 # 更新日志
 
+## 0.3.3（2026-10-08）
+
+- 负责人解析新增第三事实源：SpecCore 单元级声明（`010-requirements/features/{单元}/_matrix.md` owners 段 confirmed）——配合 SpecCore v8.3.302 负责人前置设计，gen 阶段即确定，不依赖 taskify 时序
+- 解析优先级：030-tasks 任务 owner → 单元级声明 → STAFFING 方向唯一映射（报缺不脑补铁律不变）
+
 ## 0.3.2（2026-10-08）
 
 - 新增 `export` 命令（别名 ex）：导出用例合集——功能单元多选 / 全量 / 按负责人过滤，md / yaml / json 三格式，落盘 `.spectest/exports/`
