@@ -87,6 +87,11 @@ function buildSuiteBlock(p: PreparedSuite, iteration: string): string[] {
   lines.push(`## 套件 \`${p.suiteId}\``);
   lines.push('');
   lines.push(`- 端：\`${p.platform}\`　单元：\`${p.unit}\`　类型：\`${p.testType}\``);
+  if (p.owner) {
+    lines.push(`- 负责人：\`${p.owner}\`（源自 SpecCore 任务分配/STAFFING，请以该负责人视角设计用例）`);
+  } else {
+    lines.push('- 负责人：未登记（SpecCore 030-tasks owner / STAFFING.md 均未分配；生成后可在 SUITE.yaml 手动补 owner）');
+  }
   lines.push(`- Spec 源：\`${p.specPath}\`（AC 全文以该文件为准，以下为解析摘要）`);
   lines.push(`- 输出目录：\`${p.suiteDir}/cases/\``);
   lines.push('');

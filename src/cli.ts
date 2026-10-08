@@ -43,6 +43,7 @@ import { summaryCommand } from './commands/summary.js';
 import { trendCommand } from './commands/trend.js';
 import { archiveCommand } from './commands/archive.js';
 import { statusCommand } from './commands/status.js';
+import { exportCommand } from './commands/export.js';
 import { askCommand, showAllIntents } from './commands/ask.js';
 
 // ==================== 基础配置 ====================
@@ -256,7 +257,19 @@ program
   .option('-o, --output <path>', '报告输出路径')
   .action(reportCommand);
 
-// 12. 测试总结
+// 12. 用例导出
+program
+  .command('export')
+  .alias('ex')
+  .description('导出用例合集：按期次/功能单元/负责人聚合，md/yaml/json 三格式')
+  .option('-i, --iteration <name>', '期次过滤（suite.iteration 匹配；缺省 = 全量库）')
+  .option('-u, --units <slugs>', '功能单元多选：slug 或单元名，逗号分隔')
+  .option('-a, --all', '显式全量导出（缺省即全量，兼容语义）')
+  .option('-o, --owner <name>', '按负责人过滤')
+  .option('-f, --format <fmt>', '导出格式：md / yaml / json', 'md')
+  .action(exportCommand);
+
+// 13. 测试总结
 program
   .command('summary')
   .alias('sm')

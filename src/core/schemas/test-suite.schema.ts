@@ -27,6 +27,8 @@ export const TestSuiteSchema = z.object({
   platform: z.string().min(1),
   /** 功能单元 */
   unit: z.string().min(1),
+  /** 套件负责人（源自 SpecCore 任务分配/STAFFING；未登记时缺省） */
+  owner: z.string().max(50).optional(),
   /** 包含的用例 ID 列表 */
   testCaseIds: z.array(z.string()).default([]),
   /** @deprecated 旧字段，Step 3 迁移消费方后删除 */

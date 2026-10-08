@@ -2,7 +2,8 @@ import path from 'path';
 import fs from 'fs-extra';
 import crypto from 'crypto';
 import yaml from 'js-yaml';
-import { scanSpecIndex, buildSuiteId, type ACItem } from './spec-reader.js';
+import { scanSpecIndex, buildSuiteId, findIterationDir, type ACItem } from './spec-reader.js';
+import { resolveSuiteOwner } from './staffing.js';
 import { ensureUnitMatrix, getIterationDir, getGlobalCasesRoot } from './trace-matrix.js';
 import { TestSuiteSchema, type TestSuite } from './schemas/test-suite.schema.js';
 
@@ -44,6 +45,8 @@ export interface PreparedSuite {
   suiteDir: string;
   /** 相对上次骨架 AC 是否变化（版本锚对比） */
   acChanged: boolean;
+  /** 套件负责人（源自 SpecCore 任务分配/STAFFING；未登记时 undefined） */
+  owner?: string;
   /** 已有用例文件数（SUITE.yaml 登记数，apply 后回填） */
   existingCaseCount: number;
   /** 增量复用：用例已落盘且 spec 未变 → 不重建（gen 接力清单跳过） */
@@ -144,6 +147,13 @@ export function prebuildSuites(
     }
 
     const testType = opts.testType ?? 'unit';
+
+    // 负责人：单一事实源在 SpecCore（030-tasks owner → STAFFING 方向映射），报缺不脑补
+    const iterationDir = findIterationDir(projectRoot, iteration);
+    const owner = iterationDir
+      ? resolveSuiteOwner(iterationDir, e.unitSlug, e.unitName, e.platform)
+      : undefined;
+
     const suiteId = buildSuiteId(e.platform, e.unitSlug, testType);
     const suiteDir = getSuiteDir(projectRoot, iteration, e.platform, e.unitSlug, suiteId);
 
@@ -175,6 +185,7 @@ export function prebuildSuites(
       bornIteration: prevSuite?.bornIteration ?? iteration,
       platform: e.platform,
       unit: e.unitSlug,
+      ...(owner ? { owner } : {}),
       testCaseIds: prevSuite?.testCaseIds ?? [],
       type: testType,
       tags: ['spec-anchored', e.unitSlug],
@@ -211,6 +222,7 @@ export function prebuildSuites(
       specHash,
       suiteDir,
       acChanged,
+      owner,
       existingCaseCount: prevSuite?.testCaseIds.length ?? 0,
       reused,
     });

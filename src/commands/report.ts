@@ -4,7 +4,8 @@ import yaml from 'js-yaml';
 import { Spinner, logger } from '../utils/logger.js';
 import { ensureProjectRoot, loadContext } from '../core/context.js';
 import { aggregateIterationMetrics } from '../core/metrics.js';
-import { loadAllMatrices, getUnitSuitesDir } from '../core/trace-matrix.js';
+import { loadAllMatrices, getUnitSuitesDir, getGlobalCasesRoot } from '../core/trace-matrix.js';
+import { TestSuiteSchema } from '../core/schemas/test-suite.schema.js';
 
 export interface ReportOptions {
   iteration?: string;
@@ -51,6 +52,52 @@ const STATUS_LABEL: Record<string, string> = {
   skipped: '跳过', blocked: '阻塞',
 };
 
+/** 按负责人聚合全量层套件事实（按期次过滤；损坏套件跳过，报缺不脑补） */
+function collectOwnerStats(
+  projectRoot: string, iteration: string
+): { owner: string; suites: number; cases: number; avgPassRate: number | null }[] {
+  const root = getGlobalCasesRoot(projectRoot);
+  if (!fs.existsSync(root)) return [];
+  const map = new Map<string, { suites: number; cases: number; passRateSum: number; passRateCount: number }>();
+  for (const pd of fs.readdirSync(root, { withFileTypes: true })) {
+    if (!pd.isDirectory()) continue;
+    const unitRoot = path.join(root, pd.name);
+    for (const ud of fs.readdirSync(unitRoot, { withFileTypes: true })) {
+      if (!ud.isDirectory()) continue;
+      const suitesDir = path.join(unitRoot, ud.name, 'suites');
+      if (!fs.existsSync(suitesDir)) continue;
+      for (const sd of fs.readdirSync(suitesDir, { withFileTypes: true })) {
+        if (!sd.isDirectory()) continue;
+        const suitePath = path.join(suitesDir, sd.name, 'SUITE.yaml');
+        if (!fs.existsSync(suitePath)) continue;
+        try {
+          const suite = TestSuiteSchema.parse(
+            yaml.load(fs.readFileSync(suitePath, 'utf-8'), { schema: yaml.CORE_SCHEMA })
+          );
+          if (suite.iteration !== iteration) continue;
+          const key = suite.owner ?? '未登记';
+          const st = map.get(key) ?? { suites: 0, cases: 0, passRateSum: 0, passRateCount: 0 };
+          st.suites += 1;
+          st.cases += suite.testCaseIds.length;
+          st.passRateSum += suite.passRate;
+          st.passRateCount += 1;
+          map.set(key, st);
+        } catch {
+          // 损坏套件跳过
+        }
+      }
+    }
+  }
+  return [...map.entries()]
+    .map(([owner, st]) => ({
+      owner,
+      suites: st.suites,
+      cases: st.cases,
+      avgPassRate: st.passRateCount > 0 ? Math.round(st.passRateSum / st.passRateCount) : null,
+    }))
+    .sort((a, b) => b.suites - a.suites);
+}
+
 function generateTestReport(projectRoot: string, iteration: string): string {
   const m = aggregateIterationMetrics(projectRoot, iteration);
   const rate = (v: number | null): string => (v === null ? '-' : `${v}%`);
@@ -72,6 +119,20 @@ function generateTestReport(projectRoot: string, iteration: string): string {
   md += `| P0 通过 | ${m.p0.passed}/${m.p0.total}（${m.p0.pending} 待执行） |\n`;
   md += `| 缺陷（开/关） | ${m.bugs.open} / ${m.bugs.closed} |\n`;
   md += `| 规格缺口 / 漂移套件 | ${m.specGaps} / ${m.driftSuites} |\n\n`;
+
+  // ── 负责人分布（源自 SUITE.yaml owner；未登记归「未登记」） ──
+  md += `## 负责人分布\n\n`;
+  const ownerStats = collectOwnerStats(projectRoot, iteration);
+  if (ownerStats.length === 0) {
+    md += '⚠️ 该期次暂无套件 owner 事实（SpecCore STAFFING/任务未登记时留空）。\n\n';
+  } else {
+    md += `| 负责人 | 套件数 | 用例数 | 平均通过率 |\n`;
+    md += `|----|----|----|----|\n`;
+    for (const s of ownerStats) {
+      md += `| ${s.owner} | ${s.suites} | ${s.cases} | ${s.avgPassRate === null ? '-' : `${s.avgPassRate}%`} |\n`;
+    }
+    md += '\n';
+  }
 
   // ── 单元级 AC 覆盖矩阵 ──
   md += `## AC 覆盖矩阵\n\n`;
