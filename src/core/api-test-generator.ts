@@ -1,7 +1,10 @@
 import path from 'path';
 import fs from 'fs-extra';
+import yaml from 'js-yaml';
 import { TestCase, TestSuite } from './schemas/index.js';
-import { getTestDir } from './context.js';
+import { findIterationDir, buildSuiteId, buildApiCaseId } from './spec-reader.js';
+import { ensureUnitMatrix, registerCase, rebuildIndex } from './trace-matrix.js';
+import { getSuiteDir } from './suite-skeleton.js';
 
 /**
  * API Contract 解析结构
@@ -43,8 +46,9 @@ export interface APIResponse {
 export interface APITestOptions {
   projectRoot: string;
   iteration: string;
-  suiteId: string;
-  suiteName: string;
+  /** 标准端名（服务端，与 SpecCore CONSTITUTION.md 一致） */
+  platform: string;
+  suiteName?: string;
 }
 
 export interface APITestResult {
@@ -58,19 +62,23 @@ export interface APITestResult {
 }
 
 /**
- * API 测试生成引擎
- * 从 spec-core 产出的 API_CONTRACT.yaml 生成接口测试用例
+ * API 测试生成引擎（契约面确定性生成）
+ *
+ * 从 spec-core 产出的 `030-tasks/<Task组>/_shared/API_CONTRACT.yaml` 生成接口测试用例：
+ * - 幂等套件 ID：TS-{端}-api-contract-api
+ * - 幂等用例 ID：TS-{端}-api-contract-api-EP-{端点编号}（契约面锚端点，不锚 AC）
+ * - 五类场景：正常请求 / 缺必填字段 / 字段类型错误 / 约束边界 / 404
  */
 export function generateAPITests(options: APITestOptions): APITestResult {
-  const { projectRoot, iteration, suiteId, suiteName } = options;
+  const { projectRoot, iteration, platform, suiteName } = options;
 
-  // 1. 扫描期次中所有 Task 的 API_CONTRACT.yaml
+  // 1. 扫描期次中的 API_CONTRACT.yaml（真实坐标）
   const contracts = scanAPIContracts(projectRoot, iteration);
 
   if (contracts.length === 0) {
     throw new Error(
       `期次 ${iteration} 中没有找到 API_CONTRACT.yaml 文件。\n` +
-      `请确保 spec-core 开发完成后已生成 API 契约文件。`
+      `请确保 spec-core 开发完成后已生成 API 契约文件（030-tasks/<Task组>/_shared/API_CONTRACT.yaml）。`
     );
   }
 
@@ -79,25 +87,26 @@ export function generateAPITests(options: APITestOptions): APITestResult {
   let skippedEndpoints = 0;
   const now = new Date().toISOString();
 
-  for (const contract of contracts) {
-    const cases = generateEndpointTests(contract, suiteId, now);
+  for (let i = 0; i < contracts.length; i++) {
+    const cases = generateEndpointTests(contracts[i], platform, i + 1, now);
     if (cases.length === 0) {
       skippedEndpoints++;
     }
     testCases.push(...cases);
   }
 
-  // 3. 构建测试套件
+  // 3. 构建测试套件（幂等 ID）
+  const suiteId = buildSuiteId(platform, 'api-contract', 'api');
   const suite: TestSuite = {
     id: suiteId,
-    name: suiteName,
-    description: `自动生成的 API 测试套件 - ${iteration}`,
+    name: suiteName || `${platform} API 契约测试套件`,
+    description: `API_CONTRACT.yaml 契约面测试套件 - ${iteration}`,
     iteration,
-    taskIds: contracts.map(c => c.filePath.split('/').slice(-3, -1).join('/')),
+    platform,
+    unit: 'api-contract',
     testCaseIds: testCases.map(tc => tc.id),
     type: 'api',
-    platform: 'fullstack',
-    tags: ['api', 'auto-generated'],
+    tags: ['api', 'contract', 'auto-generated'],
     passRate: 0,
     createdAt: now,
     updatedAt: now,
@@ -115,7 +124,8 @@ export function generateAPITests(options: APITestOptions): APITestResult {
 }
 
 /**
- * 扫描期次中的 API Contract 文件
+ * 扫描期次中的 API Contract 文件（真实坐标：
+ * Iteration-NNN/030-tasks/<Task组>/_shared/API_CONTRACT.yaml，回退 00-specs/）
  */
 interface ScannedContract extends APIContract {
   filePath: string;
@@ -124,182 +134,159 @@ interface ScannedContract extends APIContract {
 
 function scanAPIContracts(projectRoot: string, iteration: string): ScannedContract[] {
   const contracts: ScannedContract[] = [];
-
-  // 路径 1: 期次-XXX/Task-XXX/backend/API_CONTRACT.yaml
   const iterationDir = findIterationDir(projectRoot, iteration);
   if (!iterationDir) return [];
 
-  const taskDirs = fs.readdirSync(iterationDir, { withFileTypes: true });
+  // 递归收集候选路径
+  const candidates: string[] = [];
+  collectContractPaths(iterationDir, candidates);
 
-  for (const entry of taskDirs) {
-    if (!entry.isDirectory() || !entry.name.startsWith('Task-')) continue;
-
-    const taskId = entry.name;
-    const contractPaths = [
-      path.join(iterationDir, taskId, 'backend', 'API_CONTRACT.yaml'),
-      path.join(iterationDir, taskId, 'backend', 'API_CONTRACT.yml'),
-    ];
-
-    for (const cp of contractPaths) {
-      if (!fs.existsSync(cp)) continue;
-
-      try {
-        const content = fs.readFileSync(cp, 'utf-8');
-        const parsed = parseAPIContract(content, cp, taskId);
-        if (parsed) {
-          contracts.push(parsed);
-        }
-      } catch {
-        // 跳过解析失败的文件
-        console.warn(`⚠️ 跳过无法解析的 API Contract: ${cp}`);
-      }
+  for (const cp of candidates) {
+    const taskId = deriveTaskId(iterationDir, cp);
+    try {
+      const parsed = parseAPIContract(fs.readFileSync(cp, 'utf-8'), cp, taskId);
+      if (parsed) contracts.push(parsed);
+    } catch {
+      console.warn(`⚠️ 跳过无法解析的 API Contract: ${cp}`);
     }
   }
 
   return contracts;
 }
 
-/**
- * 查找期次目录
- */
-function findIterationDir(projectRoot: string, iteration: string): string | null {
-  const pattern = path.join(projectRoot, `期次-${iteration}`);
-  if (fs.existsSync(pattern)) return pattern;
-
-  const entries = fs.readdirSync(projectRoot, { withFileTypes: true });
-  for (const entry of entries) {
-    if (entry.isDirectory() && entry.name.includes(iteration)) {
-      return path.join(projectRoot, entry.name);
+/** 递归找 API_CONTRACT.yaml（优先 _shared/，兼容 00-specs/ 回退） */
+function collectContractPaths(dir: string, out: string[], depth = 0): void {
+  if (depth > 4) return;
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const e of entries) {
+    if (e.isDirectory()) {
+      if (e.name === 'node_modules' || e.name === '.git') continue;
+      collectContractPaths(path.join(dir, e.name), out, depth + 1);
+    } else if ((e.name === 'API_CONTRACT.yaml' || e.name === 'API_CONTRACT.yml') && !out.includes(path.join(dir, e.name))) {
+      out.push(path.join(dir, e.name));
     }
   }
+}
 
-  return null;
+function deriveTaskId(iterationDir: string, contractPath: string): string {
+  const rel = path.relative(iterationDir, contractPath);
+  const m = rel.match(/(Task-[^/]+)/);
+  return m ? m[1] : 'unknown-task';
 }
 
 /**
- * 简单解析 YAML 格式的 API Contract
- * 注意：这不是完整的 YAML 解析器，但能处理 spec-core 产出的标准格式
+ * js-yaml 解析契约（结构自适应：支持 endpoints 包装或顶层端点键）
  */
 function parseAPIContract(content: string, filePath: string, taskId: string): ScannedContract | null {
-  const lines = content.split('\n');
-  let method = '';
-  let apiPath = '';
-  let summary = '';
+  const doc = yaml.load(content, { schema: yaml.CORE_SCHEMA }) as Record<string, unknown> | null;
+  if (!doc || typeof doc !== 'object') return null;
+
+  const epRaw = doc.endpoints;
+  const endpoints: Record<string, unknown> =
+    (epRaw && typeof epRaw === 'object' && !Array.isArray(epRaw))
+      ? (epRaw as Record<string, unknown>)
+      : Object.fromEntries(Object.entries(doc).filter(([k]) => /^(GET|POST|PUT|DELETE|PATCH)\s+\S+/.test(k)));
+
+  const found: ScannedContract[] = [];
+  for (const [key, value] of Object.entries(endpoints)) {
+    if (!value || typeof value !== 'object') continue;
+    const methodMatch = key.match(/^(GET|POST|PUT|DELETE|PATCH)\s+(\S+)/);
+    if (!methodMatch) continue;
+
+    const ep = value as Record<string, unknown>;
+    const req = (ep.request ?? {}) as Record<string, unknown>;
+    const responses = (ep.responses ?? {}) as Record<string, unknown>;
+
+    found.push({
+      method: methodMatch[1],
+      path: methodMatch[2],
+      summary: String(ep.summary ?? `${methodMatch[1]} ${methodMatch[2]}`),
+      description: ep.description ? String(ep.description) : undefined,
+      tags: Array.isArray(ep.tags) ? ep.tags.map(String) : undefined,
+      request: {
+        headers: normalizeFields(req.headers),
+        params: normalizeFields(req.params),
+        query: normalizeFields(req.query),
+        body: normalizeFields(req.body),
+      },
+      responses: normalizeResponses(responses),
+      filePath,
+      taskId,
+    });
+  }
+
+  return found.length > 0 ? found[0] : null;
+}
+
+function normalizeFields(raw: unknown): Record<string, APIField> | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const fields: Record<string, APIField> = {};
+  for (const [name, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (!v || typeof v !== 'object') continue;
+    const f = v as Record<string, unknown>;
+    fields[name] = {
+      type: String(f.type ?? 'string'),
+      required: f.required === true,
+      description: f.description ? String(f.description) : undefined,
+      constraints: (f.min !== undefined || f.max !== undefined || f.pattern !== undefined)
+        ? {
+            min: typeof f.min === 'number' ? f.min : undefined,
+            max: typeof f.max === 'number' ? f.max : undefined,
+            pattern: f.pattern ? String(f.pattern) : undefined,
+          }
+        : undefined,
+      example: f.example,
+    };
+  }
+  return Object.keys(fields).length > 0 ? fields : undefined;
+}
+
+function normalizeResponses(raw: Record<string, unknown>): Record<string, APIResponse> {
   const responses: Record<string, APIResponse> = {};
-  const requestFields: Record<string, APIField> = {};
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-
-    // 提取 HTTP 方法和路径（如：POST /api/orders:）
-    const methodMatch = line.match(/^(GET|POST|PUT|DELETE|PATCH)\s+(.+):$/);
-    if (methodMatch) {
-      method = methodMatch[1];
-      apiPath = methodMatch[2];
-      continue;
-    }
-
-    // 提取摘要
-    const summaryMatch = line.match(/^\s+summary:\s*(.+)$/);
-    if (summaryMatch) {
-      summary = summaryMatch[1].trim();
-      continue;
-    }
-
-    // 提取 body 字段
-    if (line.match(/^\s+body:/)) {
-      parseFields(lines, i + 1, requestFields);
-    }
-
-    // 提取 response
-    const respMatch = line.match(/^\s+(\d{3}):/);
-    if (respMatch) {
-      const statusCode = respMatch[1];
-      const responseFields: Record<string, APIField> = {};
-      parseFields(lines, i + 1, responseFields);
-      responses[statusCode] = {
-        description: '',
-        body: responseFields,
-      };
-    }
+  for (const [code, v] of Object.entries(raw)) {
+    if (!/^\d{3}$/.test(code) || !v || typeof v !== 'object') continue;
+    const r = v as Record<string, unknown>;
+    responses[code] = {
+      description: String(r.description ?? ''),
+      body: normalizeFields(r.body),
+      headers: normalizeFields(r.headers),
+    };
   }
-
-  if (!method || !apiPath) return null;
-
-  return {
-    method,
-    path: apiPath,
-    summary: summary || `${method} ${apiPath}`,
-    request: {
-      body: Object.keys(requestFields).length > 0 ? requestFields : undefined,
-    },
-    responses,
-    filePath,
-    taskId,
-  };
+  return responses;
 }
 
 /**
- * 从 YAML 行解析字段定义
+ * 为单个 API 端点生成五类场景用例
  */
-function parseFields(lines: string[], startIndex: number, fields: Record<string, APIField>): void {
-  for (let i = startIndex; i < lines.length; i++) {
-    const line = lines[i];
-
-    // 匹配字段行（缩进 4 格以上）
-    const fieldMatch = line.match(/^\s{4,}(\w+):\s*$/);
-    if (fieldMatch) {
-      const fieldName = fieldMatch[1];
-      const field: APIField = { type: 'string', required: false };
-      fields[fieldName] = field;
-
-      // 继续读取子字段
-      for (let j = i + 1; j < lines.length; j++) {
-        const subLine = lines[j];
-        if (/^\s{2}\w/.test(subLine) || subLine.trim() === '') break; // 退出到外层
-
-        const typeMatch = subLine.match(/^\s+type:\s*(.+)$/);
-        if (typeMatch) field.type = typeMatch[1].trim();
-
-        const requiredMatch = subLine.match(/^\s+required:\s*(true|false)/);
-        if (requiredMatch) field.required = requiredMatch[1] === 'true';
-
-        const descMatch = subLine.match(/^\s+description:\s*(.+)$/);
-        if (descMatch) field.description = descMatch[1].trim();
-      }
-      continue;
-    }
-
-    // 如果退出缩进，停止解析
-    if (/^\S/.test(line) && line.trim() !== '') break;
-  }
-}
-
-/**
- * 为单个 API 端点生成测试用例
- */
-function generateEndpointTests(contract: ScannedContract, suiteId: string, now: string): TestCase[] {
+function generateEndpointTests(
+  contract: ScannedContract, platform: string, endpointIndex: number, now: string
+): TestCase[] {
   const cases: TestCase[] = [];
-  let caseIndex = 0;
-
   const taskId = contract.taskId;
+  const caseId = (n: number) => buildApiCaseId(platform, 'api-contract', endpointIndex * 10 + n);
+  let caseIndex = 0;
 
   // 1. 正常请求测试
   if (contract.responses['200'] || contract.responses['201']) {
-    const successResp = contract.responses['200'] || contract.responses['201'];
     caseIndex++;
     cases.push({
-      id: `${suiteId}-${taskId}-TC-${String(caseIndex).padStart(3, '0')}`,
+      id: caseId(caseIndex),
       name: `[API] ${contract.method} ${contract.path} - 正常请求`,
       type: 'api',
       status: 'draft',
       priority: 'high',
-      suiteId,
-      requirementIds: [taskId],
-      relatedAC: [`验证 ${contract.method} ${contract.path} 正常响应`],
+      scenario: 'happy',
+      suiteId: buildSuiteId(platform, 'api-contract', 'api'),
+      relatedAC: [],
       preconditions: ['API 服务已启动', '测试数据已准备'],
+      testData: buildExecutableRequest(contract, 'happy'),
       steps: [
-        { step: 1, action: `发送 ${contract.method} 请求到 ${contract.path}，携带有效请求参数`, expected: `返回 ${successResp ? '200/201' : '2xx'} 状态码` },
+        { step: 1, action: `发送 ${contract.method} 请求到 ${contract.path}，携带有效请求参数`, expected: '返回 200/201 状态码' },
         { step: 2, action: '验证响应体结构', expected: '响应体包含必要字段，类型正确' },
         { step: 3, action: '验证响应数据', expected: '返回数据与请求一致' },
       ],
@@ -314,18 +301,19 @@ function generateEndpointTests(contract: ScannedContract, suiteId: string, now: 
     const requiredFields = Object.entries(contract.request.body)
       .filter(([, field]) => field.required);
 
-    for (const [fieldName, field] of requiredFields) {
+    for (const [fieldName] of requiredFields) {
       caseIndex++;
       cases.push({
-        id: `${suiteId}-${taskId}-TC-${String(caseIndex).padStart(3, '0')}`,
+        id: caseId(caseIndex),
         name: `[API] ${contract.method} ${contract.path} - 缺少必填字段 ${fieldName}`,
         type: 'api',
         status: 'draft',
         priority: 'high',
-        suiteId,
-        requirementIds: [taskId],
-        relatedAC: [`验证 ${fieldName} 为必填时的错误处理`],
+        scenario: 'error',
+        suiteId: buildSuiteId(platform, 'api-contract', 'api'),
+        relatedAC: [],
         preconditions: ['API 服务已启动'],
+        testData: buildExecutableRequest(contract, 'missing-field', fieldName),
         steps: [
           { step: 1, action: `发送 ${contract.method} 请求，不传 ${fieldName} 字段`, expected: '返回 400 状态码' },
           { step: 2, action: '验证错误响应格式', expected: `错误信息明确提示 ${fieldName} 为必填` },
@@ -345,15 +333,16 @@ function generateEndpointTests(contract: ScannedContract, suiteId: string, now: 
       caseIndex++;
       const wrongType = getWrongType(field.type);
       cases.push({
-        id: `${suiteId}-${taskId}-TC-${String(caseIndex).padStart(3, '0')}`,
+        id: caseId(caseIndex),
         name: `[API] ${contract.method} ${contract.path} - ${fieldName} 类型错误（期望 ${field.type}，发送 ${wrongType}）`,
         type: 'api',
         status: 'draft',
         priority: 'medium',
-        suiteId,
-        requirementIds: [taskId],
-        relatedAC: [`验证 ${fieldName} 类型校验（${field.type}）`],
+        scenario: 'error',
+        suiteId: buildSuiteId(platform, 'api-contract', 'api'),
+        relatedAC: [],
         preconditions: ['API 服务已启动'],
+        testData: buildExecutableRequest(contract, 'wrong-type', fieldName),
         steps: [
           { step: 1, action: `发送 ${contract.method} 请求，${fieldName} 传入 ${wrongType} 类型值`, expected: '返回 400 或 422 状态码' },
           { step: 2, action: '验证错误响应', expected: `错误信息提示 ${fieldName} 类型不匹配` },
@@ -363,24 +352,23 @@ function generateEndpointTests(contract: ScannedContract, suiteId: string, now: 
         updatedAt: now,
       });
     }
-  }
 
-  // 4. 约束条件测试（min/max/pattern）
-  if (contract.request.body) {
+    // 4. 约束条件测试（min/max）
     for (const [fieldName, field] of Object.entries(contract.request.body)) {
       if (field.constraints?.min !== undefined) {
         caseIndex++;
         const min = field.constraints.min;
         cases.push({
-          id: `${suiteId}-${taskId}-TC-${String(caseIndex).padStart(3, '0')}`,
+          id: caseId(caseIndex),
           name: `[API] ${contract.method} ${contract.path} - ${fieldName} 边界值（< ${min}）`,
           type: 'api',
           status: 'draft',
           priority: 'medium',
-          suiteId,
-          requirementIds: [taskId],
-          relatedAC: [`验证 ${fieldName} 最小值约束（min: ${min}）`],
+          scenario: 'boundary',
+          suiteId: buildSuiteId(platform, 'api-contract', 'api'),
+          relatedAC: [],
           preconditions: ['API 服务已启动'],
+          testData: buildExecutableRequest(contract, 'boundary', fieldName),
           steps: [
             { step: 1, action: `发送 ${contract.method} 请求，${fieldName} 传入 ${min - 1}`, expected: '返回 400 状态码' },
             { step: 2, action: '验证错误响应', expected: `错误信息提示 ${fieldName} 不能小于 ${min}` },
@@ -393,19 +381,20 @@ function generateEndpointTests(contract: ScannedContract, suiteId: string, now: 
     }
   }
 
-  // 5. 404 Not Found 测试（如果路径包含参数）
+  // 5. 404 Not Found 测试（路径含参数）
   if (contract.path.includes('{') || contract.path.includes(':')) {
     caseIndex++;
     cases.push({
-      id: `${suiteId}-${taskId}-TC-${String(caseIndex).padStart(3, '0')}`,
+      id: caseId(caseIndex),
       name: `[API] ${contract.method} ${contract.path} - 资源不存在（404）`,
       type: 'api',
       status: 'draft',
       priority: 'low',
-      suiteId,
-      requirementIds: [taskId],
-      relatedAC: ['验证不存在的资源返回 404'],
+      scenario: 'edge',
+      suiteId: buildSuiteId(platform, 'api-contract', 'api'),
+      relatedAC: [],
       preconditions: ['API 服务已启动'],
+      testData: buildExecutableRequest(contract, 'not-found'),
       steps: [
         { step: 1, action: `发送 ${contract.method} 请求，使用不存在的资源 ID`, expected: '返回 404 状态码' },
         { step: 2, action: '验证错误响应', expected: '返回友好的 404 错误信息' },
@@ -417,6 +406,77 @@ function generateEndpointTests(contract: ScannedContract, suiteId: string, now: 
   }
 
   return cases;
+}
+
+/**
+ * 组装可执行请求信息（契约执行器的单一事实源）
+ *
+ * 写入用例 testData：method/path/query/body/expectStatus。
+ * 契约执行器（contract-runner）直接读 testData 执行，不重新推断。
+ */
+function buildExecutableRequest(
+  contract: ScannedContract,
+  kind: 'happy' | 'missing-field' | 'wrong-type' | 'boundary' | 'not-found',
+  fieldName?: string
+): Record<string, unknown> {
+  const body = contract.request.body ? buildDefaultBody(contract.request.body, fieldName, kind) : undefined;
+  const path = resolvePathParams(contract.path, kind);
+
+  const expectStatus = (() => {
+    switch (kind) {
+      case 'happy': return contract.responses['200'] ? 200 : 201;
+      case 'not-found': return 404;
+      case 'wrong-type': return 422;
+      default: return 400;
+    }
+  })();
+
+  return {
+    method: contract.method,
+    path,
+    ...(body !== undefined ? { body } : {}),
+    ...(contract.request.query ? { query: buildDefaultBody(contract.request.query) } : {}),
+    expectStatus,
+    kind,
+  };
+}
+
+/** 按字段类型生成默认值；缺必填/类型错误/边界场景按 kind 变形 */
+function buildDefaultBody(
+  fields: Record<string, APIField>,
+  targetField?: string,
+  kind?: string
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [name, f] of Object.entries(fields)) {
+    if (kind === 'missing-field' && name === targetField) continue; // 去掉必填字段
+    let v = f.example ?? defaultValueFor(f.type);
+    if (kind === 'wrong-type' && name === targetField) {
+      v = getWrongType(f.type) === 'number' ? 12345 : 'not-a-valid-type';
+    }
+    if (kind === 'boundary' && name === targetField) {
+      v = (f.constraints?.min ?? 1) - 1; // 边界外值 min-1
+    }
+    out[name] = v;
+  }
+  return out;
+}
+
+/** 类型 → 默认示例值 */
+function defaultValueFor(type: string): unknown {
+  switch (type) {
+    case 'integer':
+    case 'number': return 1;
+    case 'boolean': return true;
+    case 'array': return [];
+    case 'object': return {};
+    default: return 'test-value';
+  }
+}
+
+/** 路径参数替换：{id} → 默认值；404 场景用不存在的 ID */
+function resolvePathParams(rawPath: string, kind: string): string {
+  return rawPath.replace(/\{([^}]+)\}/g, () => (kind === 'not-found' ? '999999-nonexistent' : '1'));
 }
 
 /**
@@ -434,44 +494,50 @@ function getWrongType(type: string): string {
 }
 
 /**
- * 将生成的 API 测试套件和用例保存到文件
+ * 保存 API 测试套件（端优先目录 + js-yaml + 矩阵登记）
  */
 export function saveAPITestSuite(
   projectRoot: string,
   result: APITestResult
 ): string {
   const { suite, cases } = result;
-  const suiteDir = getTestDir(projectRoot, suite.iteration);
-  const apiSuiteDir = path.join(suiteDir, suite.id);
+  const suiteDir = getSuiteDir(projectRoot, suite.iteration, suite.platform, 'api-contract', suite.id);
 
-  fs.ensureDirSync(apiSuiteDir);
+  fs.ensureDirSync(suiteDir);
+
+  // 契约面矩阵（无 AC，cases 承载执行状态回填）
+  ensureUnitMatrix(projectRoot, suite.iteration, suite.platform, 'API 契约', 'api-contract', []);
 
   // 保存套件定义
-  const suitePath = path.join(apiSuiteDir, 'SUITE.yaml');
-  fs.writeFileSync(suitePath, toSimpleYaml(suite), 'utf-8');
+  fs.writeFileSync(path.join(suiteDir, 'SUITE.yaml'), yaml.dump(suite, { noRefs: true }), 'utf-8');
 
-  // 保存用例
-  const casesDir = path.join(apiSuiteDir, 'cases');
+  // 保存用例 + 矩阵登记
+  const casesDir = path.join(suiteDir, 'cases');
   fs.ensureDirSync(casesDir);
 
   for (const tc of cases) {
-    const casePath = path.join(casesDir, `${tc.id}.yaml`);
-    fs.writeFileSync(casePath, toSimpleYaml(tc), 'utf-8');
+    fs.writeFileSync(path.join(casesDir, `${tc.id}.yaml`), yaml.dump(tc, { noRefs: true }), 'utf-8');
+    registerCase(projectRoot, suite.iteration, suite.platform, 'api-contract', tc.id, [], tc.priority);
   }
 
   // 保存摘要
-  const summaryPath = path.join(apiSuiteDir, 'SUMMARY.md');
-  const summaryMd = generateAPISummaryMarkdown(result);
-  fs.writeFileSync(summaryPath, summaryMd, 'utf-8');
+  fs.writeFileSync(path.join(suiteDir, 'SUMMARY.md'), generateAPISummaryMarkdown(result), 'utf-8');
 
-  return apiSuiteDir;
+  // 重建索引
+  try {
+    rebuildIndex(projectRoot, suite.iteration);
+  } catch {
+    // 索引失败不阻塞保存（下次 rebuildIndex 自愈）
+  }
+
+  return suiteDir;
 }
 
 function generateAPISummaryMarkdown(result: APITestResult): string {
   const { suite, cases, summary } = result;
 
   let md = `# ${suite.name}\n\n`;
-  md += `> 自动生成于 ${new Date().toISOString()}\n\n`;
+  md += `> 生成于 ${new Date().toISOString()}\n\n`;
   md += `## 概览\n\n`;
   md += `| 指标 | 值 |\n`;
   md += `|------|----|\n`;
@@ -480,41 +546,12 @@ function generateAPISummaryMarkdown(result: APITestResult): string {
   md += `| 跳过的端点 | ${summary.skippedEndpoints} |\n\n`;
 
   md += `## 用例清单\n\n`;
-  md += `| ID | 名称 | 优先级 |\n`;
-  md += `|----|------|--------|\n`;
+  md += `| ID | 名称 | 场景 | 优先级 |\n`;
+  md += `|----|------|------|--------|\n`;
 
   for (const tc of cases) {
-    md += `| ${tc.id} | ${tc.name} | ${tc.priority} |\n`;
+    md += `| ${tc.id} | ${tc.name} | ${tc.scenario} | ${tc.priority} |\n`;
   }
 
   return md;
-}
-
-/**
- * 简单的对象转 YAML（不依赖 js-yaml）
- */
-function toSimpleYaml(obj: Record<string, unknown>, indent = 0): string {
-  const prefix = '  '.repeat(indent);
-  let yaml = '';
-
-  for (const [key, value] of Object.entries(obj)) {
-    if (value === null || value === undefined) {
-      yaml += `${prefix}${key}: null\n`;
-    } else if (Array.isArray(value)) {
-      yaml += `${prefix}${key}:\n`;
-      for (const item of value) {
-        if (typeof item === 'object' && item !== null) {
-          yaml += `${prefix}  - ${JSON.stringify(item)}\n`;
-        } else {
-          yaml += `${prefix}  - ${String(item)}\n`;
-        }
-      }
-    } else if (typeof value === 'object') {
-      yaml += `${prefix}${key}:\n`;
-      yaml += toSimpleYaml(value as Record<string, unknown>, indent + 1);
-    } else {
-      yaml += `${prefix}${key}: ${String(value)}\n`;
-    }
-  }
-  return yaml;
 }

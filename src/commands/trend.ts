@@ -1,23 +1,15 @@
-import path from 'path';
-import fs from 'fs-extra';
 import { Spinner, logger } from '../utils/logger.js';
-import { ensureProjectRoot, loadContext } from '../core/context.js';
+import { ensureProjectRoot } from '../core/context.js';
+import { aggregateIterationMetrics, listIterationsWithData, type IterationMetrics } from '../core/metrics.js';
 
 export interface TrendOptions {
   iterations?: string;
 }
 
-interface TrendPoint {
-  iteration: string;
-  coverageRate: number;
-  passRate: number;
-  bugCount: number;
-  caseCount: number;
-}
-
 /**
  * 测试趋势分析
- * 跨迭代的覆盖率/通过率/缺陷数趋势对比
+ * 数据源为 metrics 聚合层：跨迭代对比覆盖/通过/缺陷，
+ * 不解析历史报告 markdown（下游产物不是事实源）。
  */
 export async function trendCommand(options: TrendOptions): Promise<void> {
   const projectRoot = ensureProjectRoot();
@@ -27,17 +19,17 @@ export async function trendCommand(options: TrendOptions): Promise<void> {
 
   try {
     const iterations = options.iterations
-      ? options.iterations.split(',')
-      : detectIterations(projectRoot);
+      ? options.iterations.split(',').map((s) => s.trim())
+      : listIterationsWithData(projectRoot);
 
-    const trendData = iterations.map(iter => {
-      return aggregateTrendPoint(projectRoot, iter.trim());
-    }).filter((t): t is TrendPoint => t !== null);
+    const trendData = iterations
+      .map((iter) => aggregateIterationMetrics(projectRoot, iter))
+      .filter((m) => m.totalCases > 0 || m.totalAC > 0);
 
     spinner.stop('');
 
     if (trendData.length === 0) {
-      logger.warn('没有足够的历史数据来进行趋势分析');
+      logger.warn('没有足够的矩阵事实来进行趋势分析（请先 gen 生成用例）。');
       return;
     }
 
@@ -48,101 +40,34 @@ export async function trendCommand(options: TrendOptions): Promise<void> {
   }
 }
 
-function detectIterations(projectRoot: string): string[] {
-  const iterations: string[] = [];
-
-  // 从 .spectest/tests/ 目录
-  const testsDir = path.join(projectRoot, '.spectest', 'tests');
-  if (fs.existsSync(testsDir)) {
-    const dirs = fs.readdirSync(testsDir, { withFileTypes: true });
-    iterations.push(...dirs.filter(d => d.isDirectory()).map(d => d.name));
-  }
-
-  // 从 .spectest/plans/ 目录
-  const plansDir = path.join(projectRoot, '.spectest', 'plans');
-  if (fs.existsSync(plansDir)) {
-    const files = fs.readdirSync(plansDir);
-    for (const f of files) {
-      const match = f.match(/test-plan-(.+)\.md/);
-      if (match && !iterations.includes(match[1])) {
-        iterations.push(match[1]);
-      }
-    }
-  }
-
-  return iterations.sort();
-}
-
-function aggregateTrendPoint(projectRoot: string, iteration: string): TrendPoint | null {
-  const reportsDir = path.join(projectRoot, '.spectest', 'reports');
-  let coverageRate = 0;
-  let passRate = 0;
-  let bugCount = 0;
-  let caseCount = 0;
-
-  // 覆盖率
-  if (fs.existsSync(reportsDir)) {
-    const coverageFiles = fs.readdirSync(reportsDir)
-      .filter(f => f.startsWith(`coverage-${iteration}`))
-      .sort()
-      .reverse();
-
-    if (coverageFiles.length > 0) {
-      const content = fs.readFileSync(path.join(reportsDir, coverageFiles[0]), 'utf-8');
-      const crMatch = content.match(/覆盖率\s*\|\s*(\d+)%/);
-      if (crMatch) coverageRate = parseInt(crMatch[1]);
-    }
-  }
-
-  // 摘要
-  if (fs.existsSync(reportsDir)) {
-    const summaryFile = path.join(reportsDir, `summary-${iteration}.md`);
-    if (fs.existsSync(summaryFile)) {
-      const content = fs.readFileSync(summaryFile, 'utf-8');
-      const prMatch = content.match(/通过率\s*\|\s*(\d+)%/);
-      if (prMatch) passRate = parseInt(prMatch[1]);
-      const bcMatch = content.match(/缺陷总数\s*\|\s*(\d+)/);
-      if (bcMatch) bugCount = parseInt(bcMatch[1]);
-      const ccMatch = content.match(/测试用例\s*\|\s*(\d+)/);
-      if (ccMatch) caseCount = parseInt(ccMatch[1]);
-    }
-  }
-
-  return {
-    iteration,
-    coverageRate,
-    passRate,
-    bugCount,
-    caseCount,
-  };
-}
-
-function displayTrend(data: TrendPoint[]): void {
+function displayTrend(data: IterationMetrics[]): void {
   console.log('');
   console.log('┌────────────────────────────────────────────────────────────┐');
   console.log('│                    📈 测试趋势分析                         │');
   console.log('├────────────────────────────────────────────────────────────┤');
-  console.log(`│  期次    │  覆盖率  │  通过率  │  缺陷数  │  用例数      │`);
+  console.log(`│  期次    │  覆盖率  │  通过率  │  缺陷(开)  │  用例数     │`);
   console.log('├────────────────────────────────────────────────────────────┤');
 
-  for (const point of data) {
-    const coverageBar = renderMiniBar(point.coverageRate);
-    const passBar = renderMiniBar(point.passRate);
-    console.log(`│  ${point.iteration.padEnd(6)} │  ${String(point.coverageRate).padEnd(4)}% ${coverageBar} │  ${String(point.passRate).padEnd(4)}% ${passBar} │  ${String(point.bugCount).padEnd(6)} │  ${String(point.caseCount).padEnd(4)}      │`);
+  for (const m of data) {
+    const cov = m.coverageRate === null ? '-' : `${m.coverageRate}%`;
+    const pass = m.passRate === null ? '-' : `${m.passRate}%`;
+    console.log(`│  ${m.iteration.padEnd(6)} │  ${String(cov).padEnd(6)} ${renderMiniBar(m.coverageRate ?? 0)} │  ${String(pass).padEnd(6)} ${renderMiniBar(m.passRate ?? 0)} │  ${String(m.bugs.open).padEnd(8)} │  ${String(m.totalCases).padEnd(6)}      │`);
   }
 
   console.log('└────────────────────────────────────────────────────────────┘');
 
-  // 趋势分析
+  // 趋势变化（首尾对比）
   if (data.length >= 2) {
     const first = data[0];
     const last = data[data.length - 1];
     console.log('');
     console.log('📊 趋势变化：');
-    const covTrend = last.coverageRate - first.coverageRate;
-    const bugTrend = last.bugCount - first.bugCount;
-    console.log(`  覆盖率：${covTrend >= 0 ? '📈 ↑' : '📉 ↓'} ${Math.abs(covTrend)}%`);
-    console.log(`  缺陷数：${bugTrend <= 0 ? '📉 ↓' : '📈 ↑'} ${Math.abs(bugTrend)} 个`);
+    const delta = (a: number | null, b: number | null): string =>
+      (a === null || b === null) ? '—' : `${b >= a ? '↑' : '↓'} ${Math.abs(b - a)}%`;
+    console.log(`  覆盖率：${delta(first.coverageRate, last.coverageRate)}`);
+    console.log(`  通过率：${delta(first.passRate, last.passRate)}`);
+    console.log(`  缺陷数：${last.bugs.open - first.bugs.open <= 0 ? '↓' : '↑'} ${Math.abs(last.bugs.open - first.bugs.open)} 个`);
+    console.log(`  用例数：${last.totalCases - first.totalCases >= 0 ? '↑' : '↓'} ${Math.abs(last.totalCases - first.totalCases)} 个`);
   }
 
   console.log('');

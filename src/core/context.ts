@@ -152,14 +152,18 @@ export function recordHistory(context: TestContext, action: string, details: str
 }
 
 /**
- * 获取测试目录
+ * @deprecated 旧平铺测试目录（.spectest/tests/{迭代}/）
+ * 新端优先目录为 .spectest/iterations/{迭代}/{端}/{单元}/suites/，
+ * 请改用 trace-matrix.getIterationDir + suite-skeleton.getSuiteDir（五参）。
+ * Step 6/7 迁移 status/report/archive/gate/summary 后删除本函数。
  */
 export function getTestDir(projectRoot: string, iteration: string): string {
   return path.join(projectRoot, PROJECT_MARKER, 'tests', iteration);
 }
 
 /**
- * 获取套件目录
+ * @deprecated 旧三参平铺套件目录。
+ * 请改用 suite-skeleton.getSuiteDir(projectRoot, iteration, platform, unitSlug, suiteId)。
  */
 export function getSuiteDir(projectRoot: string, iteration: string, suiteId: string): string {
   return path.join(getTestDir(projectRoot, iteration), suiteId);

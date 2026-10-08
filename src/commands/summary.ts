@@ -1,29 +1,18 @@
 import path from 'path';
 import fs from 'fs-extra';
 import { Spinner, logger } from '../utils/logger.js';
-import { ensureProjectRoot, loadContext, getTestDir } from '../core/context.js';
+import { ensureProjectRoot, loadContext } from '../core/context.js';
+import { aggregateIterationMetrics, type IterationMetrics } from '../core/metrics.js';
 
 export interface SummaryOptions {
   iteration?: string;
   output?: string;
 }
 
-interface IterationMetrics {
-  iteration: string;
-  totalSuites: number;
-  totalCases: number;
-  executedCases: number;
-  passedCases: number;
-  failedCases: number;
-  passRate: number;
-  coverageRate: number;
-  bugs: { total: number; open: number; fixed: number };
-  duration: string;
-}
-
 /**
  * 测试总结
- * 迭代结束后的质量度量汇总
+ * 迭代结束后的质量度量汇总——数据源为 metrics 聚合层（矩阵执行事实），
+ * 无执行事实如实显示「-」，不伪造 100%。
  */
 export async function summaryCommand(options: SummaryOptions): Promise<void> {
   const projectRoot = ensureProjectRoot();
@@ -39,7 +28,7 @@ export async function summaryCommand(options: SummaryOptions): Promise<void> {
   spinner.start();
 
   try {
-    const metrics = aggregateMetrics(projectRoot, iteration);
+    const metrics = aggregateIterationMetrics(projectRoot, iteration);
 
     spinner.stop('');
 
@@ -47,128 +36,19 @@ export async function summaryCommand(options: SummaryOptions): Promise<void> {
 
     // 保存报告
     const reportPath = saveSummaryReport(projectRoot, metrics);
-    console.log(`📄 完整报告：${reportPath}\n`);
+    logger.info(`总结报告已保存：${reportPath}`);
   } catch (error) {
     spinner.fail(`汇总失败：${error}`);
     throw error;
   }
 }
 
-function aggregateMetrics(projectRoot: string, iteration: string): IterationMetrics {
-  const testDir = getTestDir(projectRoot, iteration);
-  let totalSuites = 0;
-  let totalCases = 0;
-  let passedCases = 0;
-  let failedCases = 0;
-
-  if (fs.existsSync(testDir)) {
-    const suiteDirs = fs.readdirSync(testDir, { withFileTypes: true });
-
-    for (const sDir of suiteDirs) {
-      if (!sDir.isDirectory()) continue;
-      totalSuites++;
-
-      const casesDir = path.join(testDir, sDir.name, 'cases');
-      if (fs.existsSync(casesDir)) {
-        totalCases += fs.readdirSync(casesDir).length;
-      }
-
-      const runsDir = path.join(testDir, sDir.name, 'runs');
-      if (fs.existsSync(runsDir)) {
-        const runFiles = fs.readdirSync(runsDir);
-        for (const rf of runFiles) {
-          try {
-            const run = fs.readJsonSync(path.join(runsDir, rf));
-            passedCases += (run.passedCases || 0);
-            failedCases += (run.failedCases || 0);
-          } catch { /* skip */ }
-        }
-      }
-    }
-  }
-
-  const executedCases = passedCases + failedCases;
-  const passRate = executedCases > 0 ? Math.round((passedCases / executedCases) * 100) : 100;
-
-  // 覆盖率
-  const coverageRate = getCoverageRate(projectRoot, iteration);
-
-  // 缺陷统计
-  const bugs = getBugStats(projectRoot, iteration);
-
-  return {
-    iteration,
-    totalSuites,
-    totalCases,
-    executedCases,
-    passedCases,
-    failedCases,
-    passRate,
-    coverageRate,
-    bugs,
-    duration: `${calculateDuration(projectRoot, iteration)} 天`,
-  };
-}
-
-function getCoverageRate(projectRoot: string, iteration: string): number {
-  const reportsDir = path.join(projectRoot, '.spectest', 'reports');
-  if (!fs.existsSync(reportsDir)) return 0;
-
-  const files = fs.readdirSync(reportsDir)
-    .filter(f => f.startsWith(`coverage-${iteration}`))
-    .sort()
-    .reverse();
-
-  if (files.length > 0) {
-    const content = fs.readFileSync(path.join(reportsDir, files[0]), 'utf-8');
-    const match = content.match(/覆盖率\s*\|\s*(\d+)%/);
-    if (match) return parseInt(match[1]);
-  }
-
-  return 0;
-}
-
-function getBugStats(projectRoot: string, iteration: string): { total: number; open: number; fixed: number } {
-  const bugsDir = path.join(projectRoot, '.spectest', 'bugs');
-  if (!fs.existsSync(bugsDir)) return { total: 0, open: 0, fixed: 0 };
-
-  const files = fs.readdirSync(bugsDir).filter(f => f.endsWith('.json'));
-  let open = 0;
-  let fixed = 0;
-
-  for (const f of files) {
-    try {
-      const bug = fs.readJsonSync(path.join(bugsDir, f));
-      if (bug.iteration !== iteration) continue;
-      if (bug.status === 'open') open++;
-      else if (bug.status === 'fixed') fixed++;
-    } catch { /* skip */ }
-  }
-
-  return {
-    total: open + fixed,
-    open,
-    fixed,
-  };
-}
-
-function calculateDuration(projectRoot: string, iteration: string): number {
-  // 简化：从期次目录的创建时间到今天
-  const testDir = getTestDir(projectRoot, iteration);
-  if (fs.existsSync(testDir)) {
-    const stat = fs.statSync(testDir);
-    const days = Math.ceil((Date.now() - stat.birthtimeMs) / (1000 * 60 * 60 * 24));
-    return Math.max(days, 1);
-  }
-  return 1;
-}
-
 function displaySummary(metrics: IterationMetrics): void {
   console.log('');
   console.log('┌──────────────────────────────────────────────┐');
-  console.log('│          📊 测试总结报告                     │');
+  console.log('│          📊 测试总结 - ' + metrics.iteration.padEnd(18) + '│');
   console.log('├──────────────────────────────────────────────┤');
-  console.log(`│  期次        │  ${metrics.iteration.padEnd(26)} │`);
+  console.log(`│  功能单元    │  ${String(metrics.totalUnits).padEnd(26)} │`);
   console.log(`│  测试套件    │  ${String(metrics.totalSuites).padEnd(26)} │`);
   console.log(`│  测试用例    │  ${String(metrics.totalCases).padEnd(26)} │`);
   console.log(`│  已执行      │  ${String(metrics.executedCases).padEnd(26)} │`);
@@ -177,12 +57,19 @@ function displaySummary(metrics: IterationMetrics): void {
   if (metrics.failedCases > 0) {
     console.log(`│  ❌ 失败     │  ${String(metrics.failedCases).padEnd(26)} │`);
   }
-  console.log(`│  通过率      │  ${String(metrics.passRate).padEnd(25)}% │`);
-  console.log(`│  覆盖率      │  ${String(metrics.coverageRate).padEnd(25)}% │`);
+  if (metrics.skippedCases > 0) {
+    console.log(`│  ⏭️ 跳过     │  ${String(metrics.skippedCases).padEnd(26)} │`);
+  }
+  if (metrics.pendingCases > 0) {
+    console.log(`│  ⏳ 未执行   │  ${String(metrics.pendingCases).padEnd(26)} │`);
+  }
+  console.log(`│  通过率      │  ${String(metrics.passRate === null ? '-' : `${metrics.passRate}%`).padEnd(25)} │`);
+  console.log(`│  覆盖率      │  ${String(metrics.coverageRate === null ? '-' : `${metrics.coverageRate}%`).padEnd(25)} │`);
+  console.log(`│  P0 通过     │  ${String(`${metrics.p0.passed}/${metrics.p0.total}`).padEnd(25)} │`);
   console.log('├──────────────────────────────────────────────┤');
   console.log(`│  🐛 缺陷总数 │  ${String(metrics.bugs.total).padEnd(26)} │`);
   console.log(`│     未修复   │  ${String(metrics.bugs.open).padEnd(26)} │`);
-  console.log(`│     已修复   │  ${String(metrics.bugs.fixed).padEnd(26)} │`);
+  console.log(`│     已修复   │  ${String(metrics.bugs.closed).padEnd(26)} │`);
   console.log('└──────────────────────────────────────────────┘');
   console.log('');
 }
@@ -192,6 +79,7 @@ function saveSummaryReport(projectRoot: string, metrics: IterationMetrics): stri
   fs.ensureDirSync(reportsDir);
 
   const reportPath = path.join(reportsDir, `summary-${metrics.iteration}.md`);
+  const rate = (v: number | null): string => (v === null ? '-' : `${v}%`);
 
   let md = `# 测试总结报告 - ${metrics.iteration}\n\n`;
   md += `> 生成时间：${new Date().toISOString()}\n\n`;
@@ -199,17 +87,22 @@ function saveSummaryReport(projectRoot: string, metrics: IterationMetrics): stri
   md += `## 质量度量\n\n`;
   md += `| 指标 | 值 |\n`;
   md += `|------|----|\n`;
+  md += `| 功能单元 | ${metrics.totalUnits} |\n`;
   md += `| 测试套件 | ${metrics.totalSuites} |\n`;
   md += `| 测试用例 | ${metrics.totalCases} |\n`;
   md += `| 已执行 | ${metrics.executedCases} |\n`;
   md += `| 通过 | ${metrics.passedCases} |\n`;
   md += `| 失败 | ${metrics.failedCases} |\n`;
-  md += `| 通过率 | ${metrics.passRate}% |\n`;
-  md += `| 覆盖率 | ${metrics.coverageRate}% |\n`;
+  md += `| 跳过 | ${metrics.skippedCases} |\n`;
+  md += `| 未执行 | ${metrics.pendingCases} |\n`;
+  md += `| 通过率 | ${rate(metrics.passRate)} |\n`;
+  md += `| 覆盖率（${metrics.coveredAC}/${metrics.totalAC} AC） | ${rate(metrics.coverageRate)} |\n`;
+  md += `| P0 通过 | ${metrics.p0.passed}/${metrics.p0.total} |\n`;
   md += `| 缺陷总数 | ${metrics.bugs.total} |\n`;
   md += `| 未修复缺陷 | ${metrics.bugs.open} |\n`;
-  md += `| 已修复缺陷 | ${metrics.bugs.fixed} |\n`;
-  md += `| 测试时长 | ${metrics.duration} |\n`;
+  md += `| 已修复缺陷 | ${metrics.bugs.closed} |\n`;
+  md += `| 规格缺口 | ${metrics.specGaps} |\n`;
+  md += `| 规格漂移套件 | ${metrics.driftSuites} |\n`;
 
   fs.writeFileSync(reportPath, md, 'utf-8');
   return reportPath;

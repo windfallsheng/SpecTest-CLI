@@ -1,15 +1,18 @@
 import path from 'path';
 import fs from 'fs-extra';
 import { Spinner, logger } from '../utils/logger.js';
-import { ensureProjectRoot, loadContext, getTestDir } from '../core/context.js';
+import { ensureProjectRoot, loadContext } from '../core/context.js';
+import { getIterationDir, getGlobalCasesRoot, loadAllMatrices } from '../core/trace-matrix.js';
+import { aggregateIterationMetrics } from '../core/metrics.js';
 
 export interface ArchiveOptions {
   iteration?: string;
 }
 
 /**
- * 测试用例归档
- * 迭代结束后，将测试用例归档到知识库
+ * 测试数据归档
+ * 迭代结束后将端优先目录（矩阵 + 套件 + 执行记录）快照到知识库，
+ * 随附 ARCHIVE_METRICS.json（归档时刻的度量事实，供趋势回溯）。
  */
 export async function archiveCommand(options: ArchiveOptions): Promise<void> {
   const projectRoot = ensureProjectRoot();
@@ -21,55 +24,51 @@ export async function archiveCommand(options: ArchiveOptions): Promise<void> {
     process.exit(1);
   }
 
+  const iterDir = getIterationDir(projectRoot, iteration);
+  if (!fs.existsSync(iterDir)) {
+    logger.error(`期次 ${iteration} 没有测试数据（.spectest/iterations/${iteration} 不存在）`);
+    process.exit(1);
+  }
+
   const spinner = new Spinner('正在归档测试数据...');
   spinner.start();
 
   try {
-    const testDir = getTestDir(projectRoot, iteration);
-    if (!fs.existsSync(testDir)) {
-      spinner.fail(`期次 ${iteration} 没有测试数据`);
-      return;
-    }
-
-    // 1. 创建归档目录
     const archiveDir = path.join(projectRoot, '.spectest', 'archive', iteration);
+
+    // 快照语义：幂等覆盖（重跑归档 = 刷新快照）
+    fs.removeSync(archiveDir);
     fs.ensureDirSync(archiveDir);
+    fs.copySync(iterDir, archiveDir);
 
-    // 2. 复制测试套件
-    const suiteDirs = fs.readdirSync(testDir, { withFileTypes: true });
-    let archivedSuites = 0;
-    let archivedCases = 0;
-
-    for (const sDir of suiteDirs) {
-      if (!sDir.isDirectory()) continue;
-      archivedSuites++;
-
-      const sourceDir = path.join(testDir, sDir.name);
-      const targetDir = path.join(archiveDir, sDir.name);
-
-      // 跳过 runs 目录（执行记录不归档）
-      fs.copySync(sourceDir, targetDir, {
-        filter: (src: string) => !src.includes('/runs/') && !src.endsWith('/runs'),
-      });
-
-      const casesDir = path.join(sourceDir, 'cases');
-      if (fs.existsSync(casesDir)) {
-        archivedCases += fs.readdirSync(casesDir).length;
+    // 快照随附该期次涉及单元的全量层用例（GLOBAL/cases 是活资产，归档带用例才自洽）
+    const matrices = loadAllMatrices(projectRoot, iteration);
+    for (const m of matrices) {
+      const src = path.join(getGlobalCasesRoot(projectRoot), m.platform, m.unitSlug);
+      if (fs.existsSync(src)) {
+        fs.copySync(src, path.join(archiveDir, 'GLOBAL-cases', m.platform, m.unitSlug));
       }
     }
 
-    // 3. 生成归档索引
-    generateArchiveIndex(archiveDir, iteration, archivedSuites, archivedCases);
+    // 归档时刻的度量事实快照
+    const metrics = aggregateIterationMetrics(projectRoot, iteration);
+    fs.writeJsonSync(path.join(archiveDir, 'ARCHIVE_METRICS.json'), {
+      archivedAt: new Date().toISOString(),
+      metrics,
+    }, { spaces: 2 });
 
-    spinner.stop(`✅ 归档完成：${archivedSuites} 个套件，${archivedCases} 个用例`);
+    spinner.stop('');
 
     console.log('');
     console.log('┌──────────────────────────────────────────┐');
     console.log('│       📦 归档结果                       │');
     console.log('├──────────────────────────────────────────┤');
     console.log(`│  期次      │  ${iteration.padEnd(20)} │`);
-    console.log(`│  测试套件  │  ${String(archivedSuites).padEnd(20)} │`);
-    console.log(`│  测试用例  │  ${String(archivedCases).padEnd(20)} │`);
+    console.log(`│  功能单元  │  ${String(metrics.totalUnits).padEnd(20)} │`);
+    console.log(`│  测试套件  │  ${String(metrics.totalSuites).padEnd(20)} │`);
+    console.log(`│  测试用例  │  ${String(metrics.totalCases).padEnd(20)} │`);
+    console.log(`│  通过率    │  ${(metrics.passRate === null ? '-' : `${metrics.passRate}%`).padEnd(20)} │`);
+    console.log(`│  覆盖率    │  ${(metrics.coverageRate === null ? '-' : `${metrics.coverageRate}%`).padEnd(20)} │`);
     console.log(`│  归档位置  │  .spectest/archive/${iteration.padEnd(10)} │`);
     console.log('└──────────────────────────────────────────┘');
     console.log('');
@@ -77,32 +76,4 @@ export async function archiveCommand(options: ArchiveOptions): Promise<void> {
     spinner.fail(`归档失败：${error}`);
     throw error;
   }
-}
-
-function generateArchiveIndex(
-  archiveDir: string,
-  iteration: string,
-  suites: number,
-  cases: number
-): void {
-  let md = `# 测试归档索引 - ${iteration}\n\n`;
-  md += `> 归档时间：${new Date().toISOString()}\n\n`;
-  md += `## 概览\n\n`;
-  md += `| 指标 | 值 |\n`;
-  md += `|------|----|\n`;
-  md += `| 测试套件 | ${suites} |\n`;
-  md += `| 测试用例 | ${cases} |\n\n`;
-  md += `## 套件列表\n\n`;
-
-  const suiteDirs = fs.readdirSync(archiveDir, { withFileTypes: true });
-  for (const sDir of suiteDirs) {
-    if (!sDir.isDirectory()) continue;
-    const casesDir = path.join(archiveDir, sDir.name, 'cases');
-    const caseCount = fs.existsSync(casesDir)
-      ? fs.readdirSync(casesDir).length
-      : 0;
-    md += `- **${sDir.name}**（${caseCount} 个用例）\n`;
-  }
-
-  fs.writeFileSync(path.join(archiveDir, 'INDEX.md'), md);
 }

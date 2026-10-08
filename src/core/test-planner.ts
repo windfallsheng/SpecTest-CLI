@@ -1,6 +1,6 @@
 import path from 'path';
 import fs from 'fs-extra';
-import { ParsedRequirement, readIterationRequirements } from './spec-reader.js';
+import { scanSpecIndex, type PlatformSpec } from './spec-reader.js';
 import { CoverageReport } from './schemas/index.js';
 
 /**
@@ -77,14 +77,15 @@ export interface TestPhase {
 export function generateTestPlan(options: TestPlanOptions): TestPlan {
   const { projectRoot, iteration, iterationGoal } = options;
 
-  // 1. 读取所有需求
-  const requirements = readIterationRequirements(projectRoot, iteration);
+  // 1. 扫描 Spec 的「功能单元 × 端」（骨架缺口跳过——报缺不脑补）
+  const entries = scanSpecIndex(projectRoot, iteration).entries.filter((e) => !e.isSkeleton);
+  const requirements = entries;
 
   if (requirements.length === 0) {
-    throw new Error(`期次 ${iteration} 中没有找到任何需求。`);
+    throw new Error(`期次 ${iteration} 中没有找到已产出的规格（020-specs 均为骨架或不存在）。`);
   }
 
-  // 2. 为每个 Task 制定测试策略
+  // 2. 为每个「单元 × 端」制定测试策略
   const strategies = requirements.map(req => buildStrategy(req));
 
   // 3. 汇总测试数据建议
@@ -99,7 +100,7 @@ export function generateTestPlan(options: TestPlanOptions): TestPlan {
     generatedAt: new Date().toISOString(),
     overview: {
       totalTasks: requirements.length,
-      totalAC: requirements.reduce((sum, r) => sum + r.acceptanceCriteria.length, 0),
+      totalAC: requirements.reduce((sum, r) => sum + r.acs.length, 0),
       highRiskTasks,
     },
     strategies,
@@ -111,8 +112,8 @@ export function generateTestPlan(options: TestPlanOptions): TestPlan {
 /**
  * 为单个 Task 制定测试策略
  */
-function buildStrategy(req: ParsedRequirement): TestStrategy {
-  const acCount = req.acceptanceCriteria.length;
+function buildStrategy(req: PlatformSpec): TestStrategy {
+  const acCount = req.acs.length;
   const recommendedTests: TestTypeAssignment[] = [];
   const riskReasons: string[] = [];
 
@@ -123,8 +124,8 @@ function buildStrategy(req: ParsedRequirement): TestStrategy {
     priority: 'high',
   });
 
-  // 有 API 的需求需要 API 测试
-  if (req.id.includes('backend') || hasAPIRelatedAC(req)) {
+  // 服务端（-service 后缀或 AC 涉及接口）需要 API 测试
+  if (/service$|-service|-api$/.test(req.platform) || hasAPIRelatedAC(req)) {
     recommendedTests.push({
       type: 'api',
       reason: '验证 API 接口契约（请求/响应/状态码）',
@@ -132,11 +133,11 @@ function buildStrategy(req: ParsedRequirement): TestStrategy {
     });
   }
 
-  // 用户故事较多 → 需要 E2E
-  if (req.userStories.length >= 2) {
+  // AC 较多 → 建议 E2E 端到端验证
+  if (req.acs.length >= 4) {
     recommendedTests.push({
       type: 'e2e',
-      reason: `包含 ${req.userStories.length} 个用户故事，建议端到端验证`,
+      reason: `包含 ${req.acs.length} 条 AC，建议端到端验证全流程`,
       priority: 'medium',
     });
   }
@@ -150,11 +151,11 @@ function buildStrategy(req: ParsedRequirement): TestStrategy {
     });
   }
 
-  // 有外部依赖 → 需要集成测试
-  if (req.dependencies.length > 0) {
+  // 有 TECH.md 技术规格 → 需要集成测试
+  if (req.techMdPath) {
     recommendedTests.push({
       type: 'integration',
-      reason: `依赖 ${req.dependencies.length} 个其他 Task，建议集成测试`,
+      reason: '存在 TECH.md 技术规格（接口/数据模型），建议集成测试',
       priority: 'medium',
     });
   }
@@ -162,12 +163,12 @@ function buildStrategy(req: ParsedRequirement): TestStrategy {
   // 风险评估
   let riskLevel: 'high' | 'medium' | 'low' = 'low';
 
-  if (req.dependencies.length >= 3) {
+  if (acCount >= 6) {
     riskLevel = 'high';
-    riskReasons.push(`依赖链较长（${req.dependencies.length} 个），变更影响大`);
-  } else if (req.dependencies.length >= 1) {
+    riskReasons.push(`AC 规模较大（${acCount} 条），测试面广风险高`);
+  } else if (acCount >= 3) {
     riskLevel = 'medium';
-    riskReasons.push(`存在外部依赖（${req.dependencies.length} 个）`);
+    riskReasons.push(`AC 规模中等（${acCount} 条）`);
   }
 
   if (acCount === 0) {
@@ -184,8 +185,8 @@ function buildStrategy(req: ParsedRequirement): TestStrategy {
   }
 
   return {
-    taskId: req.id,
-    taskName: req.name,
+    taskId: `${req.platform}/${req.unitSlug}`,
+    taskName: `${req.unitName} · ${req.platform}`,
     acCount,
     recommendedTests,
     riskLevel,
@@ -196,9 +197,9 @@ function buildStrategy(req: ParsedRequirement): TestStrategy {
 /**
  * 检测是否包含 API 相关 AC
  */
-function hasAPIRelatedAC(req: ParsedRequirement): boolean {
+function hasAPIRelatedAC(req: PlatformSpec): boolean {
   const apiKeywords = ['API', '接口', '请求', '响应', '状态码', 'HTTP', 'endpoint', 'request', 'response'];
-  return req.acceptanceCriteria.some(ac =>
+  return req.acs.some(ac =>
     apiKeywords.some(kw => ac.description.toLowerCase().includes(kw.toLowerCase()))
   );
 }
@@ -206,9 +207,9 @@ function hasAPIRelatedAC(req: ParsedRequirement): boolean {
 /**
  * 检测是否包含数据密集型 AC
  */
-function hasDataIntensiveAC(req: ParsedRequirement): boolean {
+function hasDataIntensiveAC(req: PlatformSpec): boolean {
   const dataKeywords = ['批量', '大量', '导出', '导入', '列表', '分页', '查询', '统计', 'batch', 'export', 'import', 'list', 'query'];
-  return req.acceptanceCriteria.some(ac =>
+  return req.acs.some(ac =>
     dataKeywords.some(kw => ac.description.toLowerCase().includes(kw.toLowerCase()))
   );
 }
@@ -216,15 +217,15 @@ function hasDataIntensiveAC(req: ParsedRequirement): boolean {
 /**
  * 检测是否只有异常场景 AC
  */
-function hasErrorOnlyAC(req: ParsedRequirement): boolean {
-  if (req.acceptanceCriteria.length === 0) return false;
-  return req.acceptanceCriteria.every(ac => ac.scenario !== 'happy');
+function hasErrorOnlyAC(req: PlatformSpec): boolean {
+  if (req.acs.length === 0) return false;
+  return req.acs.every(ac => ac.scenario !== 'happy');
 }
 
 /**
  * 生成测试数据建议
  */
-function buildTestDataSuggestions(requirements: ParsedRequirement[]): TestDataSuggestion[] {
+function buildTestDataSuggestions(requirements: PlatformSpec[]): TestDataSuggestion[] {
   const suggestions: TestDataSuggestion[] = [];
 
   // 正常数据
@@ -235,7 +236,7 @@ function buildTestDataSuggestions(requirements: ParsedRequirement[]): TestDataSu
   });
 
   // 边界数据
-  const hasBusinessRules = requirements.some(r => r.businessRules.length > 0);
+  const hasBusinessRules = requirements.some(r => r.techMdPath !== null);
   if (hasBusinessRules) {
     suggestions.push({
       category: 'boundary',

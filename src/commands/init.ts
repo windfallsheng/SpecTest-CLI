@@ -113,21 +113,24 @@ function createDirectoryStructure(baseDir: string, iteration: string): void {
  * 创建初始配置
  */
 function createConfig(baseDir: string, iteration: string): void {
+  // config.yaml 标准：只承载会改变 CLI 判定结果的参数（门禁阈值/流水线行为）
   const config = {
-    project: {
-      name: path.basename(process.cwd()),
-      type: 'spectest',
-      version: '0.1.0',
-    },
-    test: {
-      defaultType: 'unit',
-      defaultPlatform: 'fullstack',
-      targetIteration: iteration,
-    },
-    generatedAt: new Date().toISOString(),
+    gate: { coverageThreshold: 80, passRateThreshold: 90 },
+    pipeline: { interactive: false, defaultEnv: 'test' },
   };
 
-  fs.writeJsonSync(path.join(baseDir, 'config.json'), config, { spaces: 2 });
+  fs.writeFileSync(
+    path.join(baseDir, 'config.yaml'),
+    '# Spectest 项目配置\n' +
+    '# 阈值优先级：CLI 参数 > 本文件 > 内置默认值\n\n' +
+    'gate:\n' +
+    `  coverageThreshold: ${config.gate.coverageThreshold}\n` +
+    `  passRateThreshold: ${config.gate.passRateThreshold}\n` +
+    'pipeline:\n' +
+    `  interactive: ${config.pipeline.interactive}\n` +
+    `  defaultEnv: ${config.pipeline.defaultEnv}\n`,
+    'utf-8'
+  );
 }
 
 /**

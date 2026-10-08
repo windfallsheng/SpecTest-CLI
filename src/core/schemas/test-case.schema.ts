@@ -31,11 +31,26 @@ export const TestTypeSchema = z.enum([
 export const PrioritySchema = z.enum(['high', 'medium', 'low']);
 
 /**
+ * 场景四象限（与 AC 场景检测对齐）
+ */
+export const ScenarioSchema = z.enum(['happy', 'error', 'edge', 'boundary']);
+
+/**
+ * 幂等用例 ID：
+ * - AC 锚定（unit/integration/e2e/performance/security）：TS-{端}-{单元}-{类型}-AC-{编号}
+ * - 端点锚定（api，契约面无 AC）：TS-{端}-{单元}-api-EP-{编号}
+ */
+export const CaseIdSchema = z.string().regex(
+  /^TS-[a-z0-9-]+-[a-z0-9-]+-(?:(?:unit|integration|e2e|performance|security)-AC-\d{3}|api-EP-\d{3})$/,
+  '用例 ID 格式：TS-{端}-{单元}-{类型}-AC-{编号}（api 类型为 TS-{端}-{单元}-api-EP-{编号}）'
+);
+
+/**
  * 测试用例 Schema
  */
 export const TestCaseSchema = z.object({
-  /** 用例 ID，如 TC-001 */
-  id: z.string().regex(/^TC-\d{3}$/, '用例 ID 格式：TC-001'),
+  /** 用例 ID（锚定 AC，幂等） */
+  id: CaseIdSchema,
   /** 用例名称 */
   name: z.string().min(1).max(200),
   /** 测试类型 */
@@ -44,15 +59,17 @@ export const TestCaseSchema = z.object({
   status: TestCaseStatusSchema.default('draft'),
   /** 优先级 */
   priority: PrioritySchema.default('medium'),
+  /** 场景四象限 */
+  scenario: ScenarioSchema.default('happy'),
   /** 所属测试套件 */
   suiteId: z.string().min(1),
-  /** 关联的需求 ID（AC 来源） */
-  requirementIds: z.array(z.string()).default([]),
-  /** 关联的验收标准 */
-  relatedAC: z.array(z.string()).default([]),
+  /** 关联的 AC 编号列表（追溯矩阵的证词） */
+  relatedAC: z.array(z.string().regex(/^AC-\d{3}$/)).default([]),
+  /** @deprecated 旧字段，Step 3 迁移消费方后删除 */
+  requirementIds: z.array(z.string()).optional(),
   /** 前置条件 */
   preconditions: z.array(z.string()).default([]),
-  /** 测试步骤 */
+  /** 测试步骤（四段齐全：前置/步骤/数据/断言） */
   steps: z.array(z.object({
     step: z.number().int().positive(),
     action: z.string().min(1),
@@ -64,6 +81,27 @@ export const TestCaseSchema = z.object({
   tags: z.array(z.string()).default([]),
   /** 预估执行时间（分钟） */
   estimatedMinutes: z.number().int().positive().optional(),
+
+  // ── 端专属扩展（按端取用，CLI 端级检查清单把关）──
+  /** backend：事务边界 */
+  transactionBoundary: z.string().optional(),
+  /** backend：幂等场景 */
+  idempotency: z.string().optional(),
+  /** backend：并发场景 */
+  concurrency: z.string().optional(),
+  /** h5：元素选择器 */
+  selector: z.string().optional(),
+  /** h5：响应式视口 */
+  viewport: z.string().optional(),
+  /** h5：状态流转 */
+  stateFlow: z.string().optional(),
+  /** miniapp：生命周期时机 */
+  lifecycle: z.string().optional(),
+  /** app：机型矩阵 */
+  deviceMatrix: z.string().optional(),
+  /** app：弱网场景 */
+  network: z.string().optional(),
+
   /** 实际执行结果 */
   actualResult: z.string().optional(),
   /** 失败原因 */
@@ -77,3 +115,4 @@ export const TestCaseSchema = z.object({
 export type TestCase = z.infer<typeof TestCaseSchema>;
 export type TestCaseStatus = z.infer<typeof TestCaseStatusSchema>;
 export type TestType = z.infer<typeof TestTypeSchema>;
+export type Scenario = z.infer<typeof ScenarioSchema>;

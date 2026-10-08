@@ -57,7 +57,7 @@ function displayPlanSummary(plan: TestPlan): void {
   console.log('├──────────────────────────────────────────────┤');
   console.log(`│  期次      │  ${plan.iteration.padEnd(26)} │`);
   console.log(`│  目标      │  ${truncate(plan.iterationGoal, 26)} │`);
-  console.log(`│  Task 数   │  ${String(plan.overview.totalTasks).padEnd(26)} │`);
+  console.log(`│  单元×端  │  ${String(plan.overview.totalTasks).padEnd(26)} │`);
   console.log(`│  AC 数     │  ${String(plan.overview.totalAC).padEnd(26)} │`);
 
   const highRisk = plan.overview.highRiskTasks;

@@ -1,8 +1,8 @@
 import path from 'path';
 import fs from 'fs-extra';
-import { TestCase } from './schemas/index.js';
-import { getTestDir } from './context.js';
-import { readIterationRequirements, ParsedRequirement } from './spec-reader.js';
+import yaml from 'js-yaml';
+import { queryImpact, queryAffectedByTask, type AffectedCase } from './predicates.js';
+import { loadAllMatrices, getIterationDir, getUnitSuitesDir } from './trace-matrix.js';
 
 /**
  * 变更影响分析选项
@@ -11,10 +11,12 @@ export interface ImpactAnalysisOptions {
   projectRoot: string;
   iteration: string;
   changedTaskId?: string;
+  platform?: string;
+  unit?: string;
 }
 
 /**
- * 变更影响分析结果
+ * 变更影响分析结果（Step 4 收敛版：判定全部来自矩阵谓词）
  */
 export interface ImpactResult {
   changedTaskId: string;
@@ -28,8 +30,9 @@ export interface AffectedTestCase {
   caseId: string;
   caseName: string;
   suiteId: string;
-  filePath: string;
-  impact: 'need-update' | 'may-affected' | 'new-required';
+  platform: string;
+  unit: string;
+  impact: 'need-update' | 'new-required';
   reason: string;
 }
 
@@ -41,6 +44,7 @@ export interface RegressOptions {
   iteration: string;
   changedTaskId?: string;
   suiteId?: string;
+  platform?: string;
 }
 
 /**
@@ -51,245 +55,128 @@ export interface RegressResult {
   executed: number;
   passed: number;
   failed: number;
+  skipped: number;
+  /** 无法执行的用例（执行器未接入，报缺不脑补） */
+  notRunnable: number;
   changes: string[];
   generatedAt: string;
 }
 
 /**
- * 变更影响分析引擎
- * 当 spec-core 有需求变更时，分析哪些测试用例受影响
+ * 影响分析：AC 漂移（版本锚）+ Task 关联（契约标签）+ 未覆盖 AC 建议
+ *
+ * 铁律「判定收敛于矩阵」：不再扫描旧目录、不做描述字符串匹配。
  */
 export function analyzeImpact(options: ImpactAnalysisOptions): ImpactResult {
-  const { projectRoot, iteration, changedTaskId } = options;
+  const { projectRoot, iteration, changedTaskId, platform, unit } = options;
 
-  // 1. 尝试从 spec-core changelog 读取变更内容
-  const changes = readChangelog(projectRoot, iteration, changedTaskId);
+  const affected = new Map<string, AffectedTestCase>();
+  const add = (a: AffectedCase) => {
+    if (!affected.has(a.caseId)) {
+      affected.set(a.caseId, {
+        caseId: a.caseId,
+        caseName: resolveCaseName(projectRoot, iteration, a),
+        suiteId: a.suiteId,
+        platform: a.platform,
+        unit: a.unit,
+        impact: a.impact,
+        reason: a.reason,
+      });
+    }
+  };
 
-  // 2. 扫描所有已有测试用例，标记受影响的范围
-  const affectedTestCases = scanAffectedTests(projectRoot, iteration, changes, changedTaskId);
+  /** 读用例文件真实 name（解析失败回退 caseId） */
+  function resolveCaseName(root: string, iter: string, a: AffectedCase): string {
+    const casePath = path.join(
+      getUnitSuitesDir(root, a.platform, a.unitSlug, iter), a.suiteId, 'cases', `${a.caseId}.yaml`
+    );
+    if (!fs.existsSync(casePath)) return a.caseId;
+    try {
+      const doc = yaml.load(fs.readFileSync(casePath, 'utf-8'), { schema: yaml.CORE_SCHEMA }) as { name?: string } | null;
+      return doc?.name ?? a.caseId;
+    } catch {
+      return a.caseId;
+    }
+  }
 
-  // 3. 分析需要新增的测试
-  const newlyRequiredTests = analyzeNewTests(projectRoot, iteration, changedTaskId);
+  // 1. AC 漂移波及面（specSource 版本锚对比）
+  for (const a of queryImpact(projectRoot, iteration, { platform, unit }).affected) {
+    add(a);
+  }
+
+  // 2. Task 变更关联（契约面用例的 taskId 标签）
+  if (changedTaskId) {
+    for (const a of queryAffectedByTask(projectRoot, iteration, changedTaskId)) {
+      add(a);
+    }
+  }
+
+  // 3. 建议新增（未覆盖 AC + 骨架缺口）
+  const newlyRequiredTests = queryImpact(projectRoot, iteration, { platform, unit }).newlyRequired;
 
   return {
     changedTaskId: changedTaskId || '全部',
-    affectedTestCases,
+    affectedTestCases: [...affected.values()],
     newlyRequiredTests,
-    summary: `变更涉及 ${affectedTestCases.length} 个测试用例，建议新增 ${newlyRequiredTests.length} 个测试`,
+    summary: `变更影响 ${affected.size} 个用例，建议新增 ${newlyRequiredTests.length} 项测试`,
     generatedAt: new Date().toISOString(),
   };
 }
 
 /**
- * 回归测试引擎
- * 变更后自动跑受影响的测试用例
+ * 回归执行：受影响用例的「已登记事实」汇总
+ *
+ * 说明：真实执行由 Step 5 的三层链（verify/contract-runner/framework-run）完成，
+ * 本函数只做两件确定性的事：
+ * 1. 圈定受影响用例（谓词）
+ * 2. 汇总矩阵中已登记的执行状态（updateCaseResult 回填的事实）
+ *
+ * 未接入执行器的用例如实计 notRunnable——报缺不脑补，绝不随机造假。
  */
 export function runRegress(options: RegressOptions): RegressResult {
   const { projectRoot, iteration, changedTaskId, suiteId } = options;
 
-  // 1. 先做影响分析
   const impact = analyzeImpact({ projectRoot, iteration, changedTaskId });
+  let scope = impact.affectedTestCases;
 
-  // 2. 过滤需要更新的测试
-  const needUpdate = impact.affectedTestCases.filter(tc => tc.impact === 'need-update');
+  if (suiteId) {
+    scope = scope.filter((tc) => tc.suiteId === suiteId);
+  }
 
-  // 3. 模拟执行回归测试
+  const matrices = loadAllMatrices(projectRoot, iteration);
   let passed = 0;
   let failed = 0;
+  let skipped = 0;
+  let notRunnable = 0;
 
-  for (const tc of needUpdate) {
-    // 模拟：90% 通过率
-    if (Math.random() < 0.9) {
-      passed++;
-    } else {
-      failed++;
+  for (const tc of scope) {
+    // 矩阵中登记的最近一次执行事实
+    const m = matrices.find((x) => x.platform === tc.platform && x.unitSlug === tc.unit);
+    const entry = m?.cases.find((c) => c.caseId === tc.caseId);
+
+    if (!entry || !entry.lastRun) {
+      notRunnable++; // 从未执行过：执行器未接入或未跑，如实报告
+      continue;
+    }
+    switch (entry.status) {
+      case 'passed': passed++; break;
+      case 'failed':
+      case 'blocked': failed++; break;
+      case 'skipped': skipped++; break;
+      default: notRunnable++;
     }
   }
-
-  // 4. 读取变更列表
-  const changes = readChangelog(projectRoot, iteration, changedTaskId);
 
   return {
-    totalAffected: needUpdate.length,
-    executed: needUpdate.length,
+    totalAffected: scope.length,
+    executed: passed + failed + skipped,
     passed,
     failed,
-    changes,
+    skipped,
+    notRunnable,
+    changes: scope.slice(0, 5).map((tc) => `${tc.caseId}: ${tc.reason}`),
     generatedAt: new Date().toISOString(),
   };
-}
-
-/**
- * 从 spec-core changelog 读取变更内容
- */
-function readChangelog(projectRoot: string, iteration: string, taskId?: string): string[] {
-  const changes: string[] = [];
-
-  // 读取全量层的 CHANGELOG.md
-  const changelogPath = path.join(projectRoot, '.speccore', 'GLOBAL', 'CHANGELOG.md');
-  if (fs.existsSync(changelogPath)) {
-    const content = fs.readFileSync(changelogPath, 'utf-8');
-    const entries = content.match(/##\s+.+/g);
-    if (entries) {
-      changes.push(...entries.slice(0, 5)); // 最近 5 条变更
-    }
-  }
-
-  // 读取期次级的变更记录
-  const iterationDir = findIterationDir(projectRoot, iteration);
-  if (iterationDir && taskId) {
-    const taskChangelogPath = path.join(iterationDir, taskId, 'CHANGELOG.md');
-    if (fs.existsSync(taskChangelogPath)) {
-      const content = fs.readFileSync(taskChangelogPath, 'utf-8');
-      const entries = content.match(/[-*]\s+.+/g);
-      if (entries) {
-        changes.push(...entries.slice(0, 10));
-      }
-    }
-  }
-
-  return changes;
-}
-
-/**
- * 扫描受影响的测试用例
- */
-function scanAffectedTests(
-  projectRoot: string,
-  iteration: string,
-  changes: string[],
-  changedTaskId?: string
-): AffectedTestCase[] {
-  const affected: AffectedTestCase[] = [];
-  const testDir = getTestDir(projectRoot, iteration);
-
-  if (!fs.existsSync(testDir)) return affected;
-
-  const suiteDirs = fs.readdirSync(testDir, { withFileTypes: true });
-
-  for (const suiteDir of suiteDirs) {
-    if (!suiteDir.isDirectory()) continue;
-
-    const casesDir = path.join(testDir, suiteDir.name, 'cases');
-    if (!fs.existsSync(casesDir)) continue;
-
-    const caseFiles = fs.readdirSync(casesDir);
-    for (const file of caseFiles) {
-      if (!file.endsWith('.yaml') && !file.endsWith('.yml')) continue;
-
-      const casePath = path.join(casesDir, file);
-      const content = fs.readFileSync(casePath, 'utf-8');
-
-      // 检查是否关联了变更的 Task
-      if (changedTaskId && content.includes(changedTaskId)) {
-        const caseId = extractField(content, 'id') || file;
-        const caseName = extractField(content, 'name') || file;
-
-        affected.push({
-          caseId,
-          caseName,
-          suiteId: suiteDir.name,
-          filePath: casePath,
-          impact: 'need-update',
-          reason: `关联的 Task ${changedTaskId} 发生变更，测试用例需要更新`,
-        });
-      }
-    }
-  }
-
-  return affected;
-}
-
-/**
- * 分析需要新增的测试
- */
-function analyzeNewTests(
-  projectRoot: string,
-  iteration: string,
-  taskId?: string
-): string[] {
-  const newTests: string[] = [];
-
-  // 从 spec-core 的需求中读取新增的 AC
-
-  try {
-    const requirements = readIterationRequirements(projectRoot, iteration);
-    const targetReqs = taskId
-      ? requirements.filter((r: ParsedRequirement) => r.id === taskId)
-      : requirements;
-
-    for (const req of targetReqs) {
-      for (const ac of req.acceptanceCriteria) {
-        // 检查是否已有对应测试
-        const covered = isACAlreadyCovered(projectRoot, iteration, req.id, ac.description);
-        if (!covered) {
-          const scenarioMap: Record<string, string> = {
-            happy: `正向测试：${ac.description}`,
-            error: `异常测试：${ac.description}`,
-            boundary: `边界测试：${ac.description}`,
-            edge: `边缘测试：${ac.description}`,
-          };
-          newTests.push(`[${req.id}] ${scenarioMap[ac.scenario] || ac.description}`);
-        }
-      }
-    }
-  } catch {
-    // 忽略读取错误
-  }
-
-  return newTests;
-}
-
-/**
- * 检查 AC 是否已有测试覆盖
- */
-function isACAlreadyCovered(
-  projectRoot: string,
-  iteration: string,
-  taskId: string,
-  acDescription: string
-): boolean {
-  const testDir = getTestDir(projectRoot, iteration);
-  if (!fs.existsSync(testDir)) return false;
-
-  const suiteDirs = fs.readdirSync(testDir, { withFileTypes: true });
-
-  for (const suiteDir of suiteDirs) {
-    if (!suiteDir.isDirectory()) continue;
-
-    const casesDir = path.join(testDir, suiteDir.name, 'cases');
-    if (!fs.existsSync(casesDir)) continue;
-
-    const caseFiles = fs.readdirSync(casesDir);
-    for (const file of caseFiles) {
-      if (!file.endsWith('.yaml') && !file.endsWith('.yml')) continue;
-
-      const content = fs.readFileSync(path.join(casesDir, file), 'utf-8');
-      if (content.includes(taskId) && content.includes(acDescription.substring(0, 20))) {
-        return true;
-      }
-    }
-  }
-
-  return false;
-}
-
-function findIterationDir(projectRoot: string, iteration: string): string | null {
-  const pattern = path.join(projectRoot, `期次-${iteration}`);
-  if (fs.existsSync(pattern)) return pattern;
-
-  const entries = fs.readdirSync(projectRoot, { withFileTypes: true });
-  for (const entry of entries) {
-    if (entry.isDirectory() && entry.name.includes(iteration)) {
-      return path.join(projectRoot, entry.name);
-    }
-  }
-  return null;
-}
-
-function extractField(content: string, field: string): string | null {
-  const match = content.match(new RegExp(`^${field}:\\s*(.+)`, 'm'));
-  return match ? match[1].trim() : null;
 }
 
 /**
@@ -314,12 +201,14 @@ function generateImpactMarkdown(result: ImpactResult): string {
 
   if (result.affectedTestCases.length > 0) {
     md += `## 受影响的测试用例 (${result.affectedTestCases.length})\n\n`;
-    md += `| 用例 ID | 名称 | 影响 | 原因 |\n`;
+    md += `| 用例 ID | 套件 | 影响 | 原因 |\n`;
     md += `|---------|------|------|------|\n`;
     for (const tc of result.affectedTestCases) {
-      md += `| ${tc.caseId} | ${tc.caseName} | ${tc.impact} | ${tc.reason} |\n`;
+      md += `| ${tc.caseId} | ${tc.suiteId} | ${tc.impact} | ${tc.reason} |\n`;
     }
     md += '\n';
+  } else {
+    md += `## ✅ 无受影响用例\n\n当前 spec 版本锚无漂移，无可关联的 Task 变更。\n\n`;
   }
 
   if (result.newlyRequiredTests.length > 0) {

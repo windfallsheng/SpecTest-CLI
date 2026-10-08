@@ -55,8 +55,13 @@ function displayRegressResult(result: RegressResult): void {
   if (result.failed > 0) {
     console.log(`│  ❌ 失败      │  ${String(result.failed).padEnd(18)} │`);
   }
-  const rate = result.executed > 0 ? Math.round((result.passed / result.executed) * 100) : 100;
-  console.log(`│  通过率       │  ${String(rate).padEnd(17)}% │`);
+  if (result.notRunnable > 0) {
+    console.log(`│  未执行       │  ${String(result.notRunnable).padEnd(18)} │`);
+  }
+  const rateText = result.executed > 0
+    ? `${Math.round((result.passed / result.executed) * 100)}%`
+    : '-（无执行事实）';
+  console.log(`│  通过率       │  ${rateText.padEnd(17)} │`);
   console.log('└──────────────────────────────────────────┘');
 
   if (result.changes.length > 0) {
