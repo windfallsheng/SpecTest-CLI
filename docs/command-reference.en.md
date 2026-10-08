@@ -196,12 +196,26 @@ Defects come in two kinds: code defects (devs fix) and spec defects (flow back t
 
 Eight checks: task linkage, coverage, spec completeness, execution completeness, pass rate, P0 cases, spec drift, unfixed defects. Exit code 0 = pass, 1 = blocked.
 
+## export — case export (multi-select assembly)
+
+| Option | Notes |
+|:---|:---|
+| `-i, --iteration <name>` | Iteration filter (default: all iterations) |
+| `-u, --units <slugs>` | Pick units (comma-separated, slug or Chinese name) |
+| `-a, --all` | All units (default; explicit form) |
+| `-o, --owner <name>` | Filter by owner |
+| `-f, --format <fmt>` | Output format: md / yaml / json (default md) |
+
+Lands in `.spectest/exports/{iteration|ALL}/EXPORT-{ts}.{fmt}`. One data source, three formats: md for humans (overview → owner distribution → per-suite case tables + step details), yaml/json for machines (archive and SpecCore wiring).
+
 ## report / summary — reports
 
 | Command | Options |
 |:---|:---|
 | `report` | `-i, --iteration` / `-s, --suite <id>` / `-o, --output <path>` |
 | `summary` | `-i, --iteration <name>` |
+
+The report has four sections: overview / AC coverage matrix / suite details / owner distribution (suite count, case count, average pass rate grouped by owner).
 
 ## trend — cross-iteration trends
 

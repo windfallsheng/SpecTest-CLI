@@ -14,7 +14,7 @@
 5. [Stage 4: Switch Environments (SIT/UAT)](#stage-4-switch-environments-situat)
 6. [Stage 5: Enforce the Gate — gate](#stage-5-enforce-the-gate--gate)
 7. [Stage 6: Close Defects — bug](#stage-6-close-defects--bug)
-8. [Stage 7: Deliver Answers — report / summary / trend](#stage-7-deliver-answers--report--summary--trend)
+8. [Stage 7: Deliver Answers — report / summary / trend / export](#stage-7-deliver-answers--report--summary--trend--export)
 9. [Complete Example: One Full Cycle](#complete-example-one-full-cycle)
 10. [FAQ](#faq)
 
@@ -67,6 +67,8 @@ gen does three things:
 1. **Scans specs**: reads the SpecCore iteration's `020-specs/` (acceptance criteria AC in TEST.md, TECH.md, etc.), sliced by platform → unit → type
 2. **Pre-builds skeletons**: writes `SUITE.yaml` (suite info) and `SCAFFOLD.md` (generation guide) under `GLOBAL/cases/{platform}/{unit}/suites/TS-.../`, and registers the trace matrix
 3. **Prints the relay list**: outputs a full prompt marked `[SPECTEST_PROMPT]` and exits with **exitCode 10** — the signal to the host AI: write case files for each listed suite
+
+**Owner relay**: if SpecCore has assigned people (030-tasks subtask owner, or a unique STAFFING.md member for the platform direction), the skeleton's `SUITE.yaml` records `owner` and the relay prompt adds "design cases from that owner's perspective" — each module's cases are written by its own person. Unassigned is reported as-is, never guessed; export groups them as "unregistered" for backfill.
 
 ### 2.2 Relay and write-back (who writes the cases)
 
@@ -344,6 +346,17 @@ Produces `summary-Q1.md`: a single quality-metrics table for decision makers (ca
 spectest trend       # pass rate / coverage / defects across iterations — climbing or slipping
 spectest status      # current status panel: suites / cases / gaps at a glance
 ```
+
+### 7.4 Export cases (turn in / archive)
+
+```bash
+spectest export -i Q1                   # all cases of the iteration
+spectest export -i Q1 --units "A,B"     # pick several units
+spectest export -i Q1 --owner Alice     # filter by owner
+spectest export -i Q1 -f yaml           # machine-readable (json likewise)
+```
+
+Exports land in `.spectest/exports/{iteration|ALL}/EXPORT-{ts}.{fmt}`. md for humans: overview → owner distribution → per-suite case tables + step details; yaml/json for machines, wired to archive and SpecCore. When many requirements are split among many testers, export is the final assembly: pick by unit, pick by person, or gather all — one deliverable in hand.
 
 ---
 

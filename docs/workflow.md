@@ -14,7 +14,7 @@
 5. [阶段四：换环境（SIT/UAT）](#阶段四换环境situat)
 6. [阶段五：把门禁 gate](#阶段五把门禁-gate)
 7. [阶段六：闭缺陷 bug](#阶段六闭缺陷-bug)
-8. [阶段七：出答卷 report / summary / trend](#阶段七出答卷-report--summary--trend)
+8. [阶段七：出答卷 report / summary / trend / export](#阶段七出答卷-report--summary--trend--export)
 9. [完整示例：一轮端到端](#完整示例一轮端到端)
 10. [高频问题](#高频问题)
 
@@ -66,6 +66,8 @@ gen 做三件事：
 1. **扫描规格**：读取 SpecCore 迭代的 `020-specs/`（TEST.md 的验收标准 AC、TECH.md 等），按「端 → 功能单元 → 类型」切分
 2. **预建骨架**：在 `GLOBAL/cases/{端}/{单元}/suites/TS-.../` 下生成 `SUITE.yaml`（套件信息）与 `SCAFFOLD.md`（生成指引），并登记追溯矩阵
 3. **打印接力清单**：输出 `[SPECTEST_PROMPT]` 标记的完整提示，并以 **exitCode 10** 退出——这是给宿主 AI 的信号：请按清单为每个套件编写用例文件
+
+**负责人接力**：若 SpecCore 已分配人员（030-tasks 子任务 owner，或 STAFFING.md 平台方向唯一成员），骨架的 `SUITE.yaml` 会写入 `owner`，接力提示随之带上「以该负责人视角设计用例」——谁的模块谁写用例。未登记不脑补，导出时归「未登记」便于补录。
 
 ### 2.2 接力与回写（谁写用例）
 
@@ -343,6 +345,17 @@ spectest summary -i Q1
 spectest trend       # 通过率/覆盖率/缺陷数随期次走向——质量在爬坡还是滑坡
 spectest status      # 当前状态面板：套件/用例/缺口速览
 ```
+
+### 7.4 导出案例 export（交卷 / 归档）
+
+```bash
+spectest export -i Q1                   # 该期次全部用例
+spectest export -i Q1 --units "A,B"     # 只挑几个功能单元
+spectest export -i Q1 --owner 张三      # 按负责人过滤
+spectest export -i Q1 -f yaml           # 机读格式（json 同）
+```
+
+导出落盘 `.spectest/exports/{期次|ALL}/EXPORT-{ts}.{fmt}`。md 人读：概览 → 负责人分布 → 逐套件用例表 + 步骤明细；yaml/json 机读，对接归档与 SpecCore。多需求、多人分头生成时，导出就是总装：按单元挑、按人挑、全部拼盘，一份答卷交出去。
 
 ---
 

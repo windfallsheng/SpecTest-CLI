@@ -97,7 +97,8 @@ The division of labor: **deterministic things are done by the CLI, creative thin
 | `impact` | Analyze change impact | `spectest impact --task Task-001` |
 | `bug` | Record/close/list defects | `spectest bug --case-id TS-xxx-AC-001 --title "amount precision lost"` |
 | `gate` | Quality gate check | `spectest gate -i Q1` |
-| `visual-review` | Visual model review (optional) | `spectest visual-review -i Q1 --image base.png --question "Matches UI_SPEC?"` |
+| `visual-review` | Visual model review (optional) |
+| `export` | Export case collections (multi-select / all / by owner) | `spectest export -i Q1 --units "A,B" --format md` | `spectest visual-review -i Q1 --image base.png --question "Matches UI_SPEC?"` |
 | `report` | Generate a test report | `spectest report -i Q1` |
 | `summary` | Generate a test summary | `spectest summary -i Q1` |
 | `trend` | Cross-iteration trend analysis | `spectest trend` |

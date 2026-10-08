@@ -97,7 +97,8 @@ SpecTest 的分工纪律：**确定性的事 CLI 做，创造性的事 AI 做**�
 | `impact` | 分析变更影响 | `spectest impact --task Task-001` |
 | `bug` | 记录/关闭/查看缺陷 | `spectest bug --case-id TS-xxx-AC-001 --title "金额精度丢失"` |
 | `gate` | 质量门禁检查 | `spectest gate -i Q1` |
-| `visual-review` | 视觉模型审查（可选） | `spectest visual-review -i Q1 --image base.png --question "符合 UI_SPEC 吗"` |
+| `visual-review` | 视觉模型审查（可选） |
+| `export` | 导出用例合集（多选/全量/按负责人） | `spectest export -i Q1 --units "A,B" --format md` | `spectest visual-review -i Q1 --image base.png --question "符合 UI_SPEC 吗"` |
 | `report` | 生成测试报告 | `spectest report -i Q1` |
 | `summary` | 生成测试总结 | `spectest summary -i Q1` |
 | `trend` | 跨迭代趋势分析 | `spectest trend` |

@@ -1,5 +1,11 @@
 # 更新日志
 
+## 0.3.2（2026-10-08）
+
+- 新增 `export` 命令（别名 ex）：导出用例合集——功能单元多选 / 全量 / 按负责人过滤，md / yaml / json 三格式，落盘 `.spectest/exports/`
+- 套件层负责人设计：SUITE.yaml 新增 `owner` 字段，与 SpecCore 人员体系对齐（STAFFING.md 平台方向 + 030-tasks 子任务 owner）；任务分配优先、方向唯一成员才确定、报缺不脑补
+- gen 接力提示按负责人视角注入；report 新增「负责人分布」节（owner 分组汇总套件数 / 用例数 / 平均通过率）
+
 ## 0.3.1（2026-10-08）
 
 - 新增 docs/workflow.md / workflow.en.md：《测试工作流全解》——面向测试人员的全流程详细手册（七阶段：init → gen 接力 → run 三层 → 环境矩阵 → gate 八项 → bug 闭环 → report/summary/trend），含完整端到端示例与高频问答

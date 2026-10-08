@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.2 (2026-10-08)
+
+- New `export` command (alias ex): export case collections — multi-unit select / all / filter by owner, in md / yaml / json, landing in `.spectest/exports/`
+- Suite-level owner design: `owner` field added to SUITE.yaml, aligned with the SpecCore staffing system (STAFFING.md platform direction + 030-tasks subtask owner); task assignment wins first, a unique direction member is the only determination, report gaps as-is never guess
+- gen relay prompt injects the owner perspective; report gains an "owner distribution" section (suite count / case count / average pass rate grouped by owner)
+
 ## 0.3.1 (2026-10-08)
 
 - New docs/workflow.md / workflow.en.md: the Testing Workflow Handbook — a full-depth walkthrough for testers (seven stages: init → gen relay → run three layers → env matrix → eight gate checks → bug loop → report/summary/trend), with a complete end-to-end example and FAQ

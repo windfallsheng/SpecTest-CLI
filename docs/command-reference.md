@@ -196,12 +196,26 @@ spectest bug list [--status open|closed|all]
 
 八项检查：Task 关联、覆盖率、规格完备性、执行完备性、通过率、P0 用例、规格漂移、未修复缺陷。退出码 0 = 放行，1 = 拦截。
 
+## export — 用例导出（多选聚合）
+
+| 选项 | 说明 |
+|:---|:---|
+| `-i, --iteration <name>` | 期次过滤（缺省导出全部期次） |
+| `-u, --units <slugs>` | 功能单元多选（逗号分隔，slug 或中文名均可） |
+| `-a, --all` | 全部单元（缺省即全量，显式声明用） |
+| `-o, --owner <name>` | 按负责人过滤 |
+| `-f, --format <fmt>` | 导出格式：md / yaml / json（缺省 md） |
+
+落盘 `.spectest/exports/{期次|ALL}/EXPORT-{ts}.{fmt}`。三格式同一数据源：md 人读（概览 → 负责人分布 → 逐套件用例表 + 步骤明细），yaml/json 机读（对接归档与 SpecCore）。
+
 ## report / summary — 报告与总结
 
 | 命令 | 选项 |
 |:---|:---|
 | `report` | `-i, --iteration` / `-s, --suite <id>` / `-o, --output <path>` |
 | `summary` | `-i, --iteration <name>` |
+
+报告四节：概览 / AC 覆盖矩阵 / 套件明细 / 负责人分布（owner 分组汇总套件数、用例数、平均通过率）。
 
 ## trend — 跨期次趋势
 
