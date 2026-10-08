@@ -1,0 +1,42 @@
+# SpecTest GitHub Actions 流水线模板
+# 用法：复制到 .github/workflows/spectest.yml，按需调整 ITERATION / ENV / 密钥
+# 三层链：静态验证（零成本）→ 契约执行（--env 指向目标环境）→ gate 门禁
+name: Spectest Quality Gate
+
+on:
+  workflow_dispatch:
+    inputs:
+      iteration:
+        description: '期次名称（如 Iteration-003-xxx）'
+        required: true
+      env:
+        description: '契约执行环境（sit/uat/test，逗号分隔 = 环境矩阵）'
+        required: false
+        default: 'sit'
+
+jobs:
+  spectest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: 安装 SpecTest
+        run: npm install -g spectest-cli
+
+      - name: 层 1 静态验证（零成本先拦）
+        run: spectest verify -i ${{ inputs.iteration }}
+
+      - name: 层 2 契约执行（SIT 冒烟：只跑 P0）
+        env:
+          SIT_TOKEN: ${{ secrets.SIT_TOKEN }}
+        run: spectest contract-run -i ${{ inputs.iteration }} --env ${{ inputs.env }} --priority high --retry 1
+
+      - name: 层 3 宿主框架（业务实现面）
+        run: spectest run -i ${{ inputs.iteration }} --env ${{ inputs.env }}
+
+      - name: gate 质量门禁（--json 供机器解析）
+        run: spectest gate -i ${{ inputs.iteration }} --json
