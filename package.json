@@ -1,14 +1,14 @@
 {
-  "name": "spectest",
-  "version": "0.1.0",
-  "description": "SpecTest - 测试底座，让 AI 从需求自动生成测试用例",
+  "name": "spectest-cli",
+  "version": "0.3.1",
+  "description": "SpecTest - Test by Spec, Not by Guess. Spec-driven test case generation, execution pipeline and quality gate for the Spec* ecosystem.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
     "spectest": "./bin/spectest"
   },
   "scripts": {
-    "build": "tsc && cp -r src/locales dist/",
+    "build": "tsc && cp -r src/locales dist/ && cp -r src/templates dist/",
     "watch": "tsc --watch",
     "dev": "ts-node src/cli.ts",
     "test": "vitest run",
@@ -18,7 +18,9 @@
   },
   "files": [
     "dist",
-    "bin"
+    "bin",
+    "docs",
+    "templates"
   ],
   "dependencies": {
     "commander": "^11.1.0",
