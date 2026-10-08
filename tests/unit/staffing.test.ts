@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'fs-extra';
 import os from 'os';
 import path from 'path';
-import { loadStaffing, resolveTaskOwner, resolveSuiteOwner } from '../../src/core/staffing.js';
+import { loadStaffing, resolveTaskOwner, resolveSuiteOwner, resolveUnitOwner } from '../../src/core/staffing.js';
 
 function tmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'spectest-staffing-'));
@@ -98,5 +98,62 @@ describe('resolveSuiteOwner', () => {
     ].join('\n'));
     expect(resolveSuiteOwner(dir, 'yudingguanli', '预订管理', 'h5-mobile')).toBeUndefined();
     expect(resolveSuiteOwner(dir, 'yudingguanli', '预订管理', 'unknown-end')).toBeUndefined();
+  });
+});
+
+describe('resolveUnitOwner', () => {
+  function writeMatrix(dir: string, unit: string, decls: string[]): void {
+    fs.outputFileSync(path.join(dir, '010-requirements', 'features', unit, '_matrix.md'), [
+      `# ${unit} - 端覆盖矩阵`, '',
+      `feature: 预订管理`,
+      'platforms:',
+      '  - h5-mobile',
+      'clarify: needed',
+      'owners:',
+      ...decls,
+      'dependencies: []',
+    ].join('\n'));
+  }
+
+  it('_matrix.md owners confirmed 命中 → 返回负责人', () => {
+    const dir = tmpDir();
+    writeMatrix(dir, 'h5-mobile-01-yudingguanli', [
+      '  - platform: h5-mobile',
+      '    name: 张三',
+      '    status: confirmed',
+    ]);
+    expect(resolveUnitOwner(dir, 'yudingguanli', '预订管理', 'h5-mobile')).toBe('张三');
+  });
+
+  it('仅 pending（候选未拍板）→ undefined 不脑补', () => {
+    const dir = tmpDir();
+    writeMatrix(dir, 'h5-mobile-01-yudingguanli', [
+      '  - platform: h5-mobile',
+      '    name: 张三',
+      '    status: pending',
+    ]);
+    expect(resolveUnitOwner(dir, 'yudingguanli', '预订管理', 'h5-mobile')).toBeUndefined();
+  });
+
+  it('无 features 目录 → undefined', () => {
+    expect(resolveUnitOwner(tmpDir(), 'u', '单元', 'h5-mobile')).toBeUndefined();
+  });
+
+  it('resolveSuiteOwner 链路：单元声明优先于 STAFFING 方向映射', () => {
+    const dir = tmpDir();
+    // STAFFING：Web 方向两人（方向不唯一，按旧规则无法确定）
+    fs.outputFileSync(path.join(dir, 'STAFFING.md'), [
+      '| 成员 | 平台方向 | 投入比例 |',
+      '| :--- | :--- | :--- |',
+      '| 张三 | Web | 80% |',
+      '| 李四 | Web | 70% |',
+    ].join('\n'));
+    // 单元声明：h5-mobile 已拍板张三
+    writeMatrix(dir, 'h5-mobile-01-yudingguanli', [
+      '  - platform: h5-mobile',
+      '    name: 张三',
+      '    status: confirmed',
+    ]);
+    expect(resolveSuiteOwner(dir, 'yudingguanli', '预订管理', 'h5-mobile')).toBe('张三');
   });
 });

@@ -4,9 +4,10 @@ import fs from 'fs-extra';
 /**
  * 人员读取层 —— 铁律「人员单一事实源在 SpecCore，报缺不脑补」
  *
- * 负责人解析优先级：
+ * 负责人解析优先级（v0.3.3+: 新增单元级声明第三事实源）：
  * 1. 030-tasks 开发侧任务分配（feature == 功能单元 → {端}/{子任务}/.meta/owner）
- * 2. STAFFING.md 人员排期表（成员 → 平台方向，方向唯一成员才确定）
+ * 2. 单元级 owner 声明（010-requirements/features/{单元}/_matrix.md owners 段 confirmed）
+ * 3. STAFFING.md 人员排期表（成员 → 平台方向，方向唯一成员才确定）
  * 都无 → undefined（SUITE.yaml owner 留空，不脑补）
  */
 
@@ -78,9 +79,64 @@ export function resolveSuiteOwner(
   const taskOwner = resolveTaskOwner(iterationDir, unit, unitName, platform);
   if (taskOwner) return taskOwner;
 
+  // 第三事实源：SpecCore 单元级声明（_matrix.md owners 段 confirmed）
+  const unitOwner = resolveUnitOwner(iterationDir, unit, unitName, platform);
+  if (unitOwner) return unitOwner;
+
   const direction = PLATFORM_DIRECTION[platform];
   if (!direction) return undefined;
   const matched = loadStaffing(iterationDir).filter((m) => m.directions.includes(direction));
   // 方向唯一成员 → 确定；多人或无人 → 不脑补，留空待填
   return matched.length === 1 ? matched[0].name : undefined;
+}
+
+
+/**
+ * 单元级 owner 声明（SpecCore v8.3.302+ 负责人前置设计）：
+ * 读 010-requirements/features/{单元}/_matrix.md 的 owners 段，
+ * 返回 platform 匹配且 status=confirmed 的负责人；无/仅 pending → undefined。
+ */
+export function resolveUnitOwner(
+  iterationDir: string, unit: string, unitName: string, platform: string
+): string | undefined {
+  const featuresDir = path.join(iterationDir, '010-requirements', 'features');
+  if (!fs.existsSync(featuresDir)) return undefined;
+  for (const fd of fs.readdirSync(featuresDir, { withFileTypes: true })) {
+    if (!fd.isDirectory()) continue;
+    const hit = fd.name.includes(unit) || (unitName ? fd.name.includes(unitName) : false);
+    if (!hit) continue;
+    const matrixPath = path.join(featuresDir, fd.name, '_matrix.md');
+    if (!fs.existsSync(matrixPath)) continue;
+    const owner = parseConfirmedOwner(fs.readFileSync(matrixPath, 'utf-8'), platform);
+    if (owner) return owner;
+  }
+  return undefined;
+}
+
+/** 解析 _matrix.md owners 段：- platform / name / status，返回 platform 匹配的 confirmed */
+function parseConfirmedOwner(matrixContent: string, platform: string): string | undefined {
+  const start = matrixContent.search(/^owners:/m);
+  if (start < 0) return undefined;
+  const tail = matrixContent.slice(start + 'owners:'.length);
+  const nextKey = tail.search(/\n(?:feature|type|platforms|clarify|dependencies|apis)\s*:|\n#/);
+  const end = nextKey >= 0 ? start + 'owners:'.length + nextKey : matrixContent.length;
+  const m = [matrixContent.slice(start, end)];
+  let curPlatform: string | undefined;
+  let curName: string | undefined;
+  let curStatus: string | undefined;
+  for (const line of m[0].split('\n')) {
+    const pm = line.match(/^\s*-\s*platform:\s*(\S+)/);
+    if (pm) {
+      if (curPlatform === platform && curStatus === 'confirmed' && curName) return curName;
+      curPlatform = pm[1];
+      curName = undefined;
+      curStatus = undefined;
+      continue;
+    }
+    const nm = line.match(/^\s*name:\s*(.+?)\s*$/);
+    if (nm) curName = nm[1];
+    const sm = line.match(/^\s*status:\s*(pending|confirmed)/);
+    if (sm) curStatus = sm[1];
+  }
+  return curPlatform === platform && curStatus === 'confirmed' ? curName : undefined;
 }
