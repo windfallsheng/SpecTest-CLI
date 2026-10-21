@@ -12,6 +12,8 @@ export interface GenOptions {
   type?: TestTypeName;
   /** AI 接力后的回写模式 */
   apply?: boolean;
+  /** 独立输入通道：自备规格目录（与 020-specs 同构 {单元}/{端名}/TEST.md） */
+  specDir?: string;
 }
 
 /**
@@ -40,6 +42,7 @@ export async function genCommand(options: GenOptions): Promise<void> {
         platform: options.platform,
         unit: options.unit,
         testType: options.type,
+        specDir: options.specDir,
       });
       spinner.stop('');
       displayApplyResult(projectRoot, iteration, result);
@@ -56,7 +59,7 @@ export async function genCommand(options: GenOptions): Promise<void> {
 
   let result;
   try {
-    const opts: SkeletonOptions = { platform: options.platform, unit: options.unit, testType: options.type };
+    const opts: SkeletonOptions = { platform: options.platform, unit: options.unit, testType: options.type, specDir: options.specDir };
     result = prebuildSuites(projectRoot, iteration, opts);
     spinner.stop('');
   } catch (error) {

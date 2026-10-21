@@ -85,7 +85,7 @@ program
   .option('-i, --iteration <name>', '指定期次名称')
   .action(initCommand);
 
-// 2. 测试计划
+// 3. 测试计划
 program
   .command('plan')
   .alias('pl')
@@ -94,7 +94,7 @@ program
   .option('-g, --goal <goal>', '期次目标描述')
   .action(planCommand);
 
-// 3. 生成测试用例（骨架预建 + AI 接力）
+// 4. 生成测试用例（骨架预建 + AI 接力）
 program
   .command('gen')
   .alias('g')
@@ -103,10 +103,11 @@ program
   .option('-p, --platform <platform>', '端名过滤（标准端名）')
   .option('-u, --unit <unit>', '功能单元过滤（slug 或单元名）')
   .option('-t, --type <type>', '测试类型：unit, integration, e2e, api, performance, security', 'unit')
+  .option('--spec-dir <path>', '独立输入通道：自备规格目录（{单元}/{端名}/TEST.md，与 020-specs 同构）')
   .option('--apply', 'AI 生成用例后的回写模式（zod 校验 + 矩阵登记 + 索引重建）')
   .action(genCommand);
 
-// 4. 生成 API 测试
+// 5. 生成 API 测试
 program
   .command('api')
   .alias('a')
@@ -116,7 +117,7 @@ program
   .option('-n, --name <name>', '测试套件名称')
   .action(apiCommand);
 
-// 5. 覆盖缺口分析
+// 6. 覆盖缺口分析
 program
   .command('gap')
   .alias('gp')
@@ -125,7 +126,7 @@ program
   .option('-o, --output <path>', '报告输出路径')
   .action(gapCommand);
 
-// 6. 执行测试
+// 7. 执行测试
 program
   .command('run')
   .alias('r')
@@ -141,7 +142,7 @@ program
   .option('--args <extra...>', '附加参数透传宿主框架')
   .action(runCommand);
 
-// 契约执行
+// 8. 契约执行
 program
   .command('contract-run')
   .alias('cr')
@@ -155,7 +156,7 @@ program
   .option('--retry <n>', '失败重试次数（默认 0，共执行 1+retry 次）')
   .action(contractRunCommand);
 
-// 视觉模型审查（OpenAI 兼容，可选审查器）
+// 9. 视觉模型审查（OpenAI 兼容，可选审查器）
 program
   .command('visual-review')
   .alias('vr')
@@ -166,7 +167,7 @@ program
   .option('-c, --context <text>', '补充上下文（UI_SPEC 描述 / AC 文本）')
   .action(visualReviewCommand);
 
-// 静态验证
+// 10. 静态验证
 program
   .command('verify')
   .alias('vf')
@@ -176,7 +177,7 @@ program
   .option('-u, --unit <name>', '单元过滤')
   .action(verifyCommand);
 
-// 7. 回归测试
+// 11. 回归测试
 program
   .command('regress')
   .alias('rg')
@@ -185,7 +186,7 @@ program
   .option('-t, --task <id>', '指定变更的 Task ID')
   .action(regressCommand);
 
-// 8. 变更影响分析
+// 12. 变更影响分析
 program
   .command('impact')
   .alias('im')
@@ -194,7 +195,7 @@ program
   .option('-t, --task <id>', '指定变更的 Task ID')
   .action(impactCommand);
 
-// 9. 缺陷提交
+// 13. 缺陷提交
 const bugCmd = program
   .command('bug')
   .alias('bg')
@@ -219,7 +220,7 @@ bugCmd
   .option('--status <s>', '状态过滤：open/closed/all', 'open')
   .action((cmd: { status?: string }) => listBugsCommand({ status: cmd.status }));
 
-// 10. 质量门禁
+// 14. 质量门禁
 program
   .command('gate')
   .alias('gt')
@@ -230,7 +231,7 @@ program
   .option('--json', '输出 JSON（供门禁回流机器解析）')
   .action(gateCommand);
 
-// 11. 项目配置
+// 15. 项目配置
 program
   .command('config')
   .alias('cfg')
@@ -247,7 +248,7 @@ program
     })
   );
 
-// 12. 测试报告
+// 16. 测试报告
 program
   .command('report')
   .alias('rp')
@@ -257,7 +258,7 @@ program
   .option('-o, --output <path>', '报告输出路径')
   .action(reportCommand);
 
-// 12. 用例导出
+// 17. 用例导出
 program
   .command('export')
   .alias('ex')
@@ -269,7 +270,7 @@ program
   .option('-f, --format <fmt>', '导出格式：md / yaml / json', 'md')
   .action(exportCommand);
 
-// 13. 测试总结
+// 18. 测试总结
 program
   .command('summary')
   .alias('sm')
@@ -277,7 +278,7 @@ program
   .option('-i, --iteration <name>', '指定期次名称')
   .action(summaryCommand);
 
-// 13. 趋势分析
+// 19. 趋势分析
 program
   .command('trend')
   .alias('td')
@@ -285,7 +286,7 @@ program
   .option('-i, --iterations <list>', '期次列表，逗号分隔（如 Q1,Q2,Q3）')
   .action(trendCommand);
 
-// 14. 测试归档
+// 20. 测试归档
 program
   .command('archive')
   .alias('ar')
@@ -293,7 +294,7 @@ program
   .option('-i, --iteration <name>', '指定期次名称')
   .action(archiveCommand);
 
-// 15. 测试状态
+// 21. 测试状态
 program
   .command('status')
   .alias('st')
@@ -309,23 +310,27 @@ program.addHelpText('beforeAll', `
 └─────────────────────────────────────────────────────┘
 
 核心流程：
-  1. ask     → 自然语言智能入口（说人话，自动识别意图并执行）
-  2. init    → 初始化测试项目
-  3. plan    → 生成测试计划（策略、风险、时间线）
-  4. gen     → 从 AC 生成测试用例（已有用例复用，增量不重建）
-  5. api     → 从 API Contract 生成接口测试
-  6. gap     → 检测覆盖缺口
-  7. run     → 执行测试流水线（无参 = 全量回归，跨期次逐期推进）
-  8. regress → 变更后自动执行回归测试
-  9. impact  → 分析变更影响
-  10. bug    → 记录缺陷（子命令：close 关闭 / list 清单）
-  11. gate   → 质量门禁检查
-  12. report → 生成测试报告
-  13. summary → 生成测试总结
-  14. trend  → 跨迭代趋势分析
-  15. archive → 迭代测试数据归档（快照随附用例副本）
-  16. status → 查看测试状态
-  17. config → 查看/设置配置（config.yaml）
+  1. ask           → 自然语言智能入口（说人话，自动识别意图并执行）
+  2. init          → 初始化测试项目（自动生成环境模板）
+  3. plan          → 生成测试计划（策略、风险、时间线）
+  4. gen           → 从 AC 生成测试用例（已有用例复用；--spec-dir 自备规格目录）
+  5. api           → 从 API Contract 生成接口测试
+  6. gap           → 检测覆盖缺口
+  7. run           → 执行测试流水线（无参 = 全量回归，跨期次逐期推进）
+  8. contract-run  → 契约执行（真实 HTTP + 状态码断言，内置执行器）
+  9. visual-review → 视觉模型审查（基线确认 / diff 分析 / 语义断言）
+  10. verify       → 文档静态验证（AC 完整性/四段齐全/端级专项）
+  11. regress      → 变更后自动执行回归测试
+  12. impact       → 分析变更影响
+  13. bug          → 记录缺陷（子命令：close 关闭 / list 清单）
+  14. gate         → 质量门禁检查
+  15. config       → 查看/设置配置（config.yaml）
+  16. report       → 生成测试报告
+  17. export       → 导出用例合集（md/yaml/json 三格式）
+  18. summary      → 生成测试总结
+  19. trend        → 跨迭代趋势分析
+  20. archive      → 迭代测试数据归档（快照随附用例副本）
+  21. status       → 查看测试状态
 
 用例资产全量层：.spectest/GLOBAL/cases 跨期次复用；迭代层只留 matrix 执行事实。
 
@@ -335,6 +340,7 @@ program.addHelpText('beforeAll', `
   spectest ask "记录缺陷 --case-id TS-xxx-AC-001 标题 金额精度丢失"
   spectest plan --iteration Q1 --goal "订单导出功能"
   spectest gen --iteration Q1 --type unit
+  spectest gen --iteration Q1 --spec-dir ./my-specs
   spectest api --iteration Q1
   spectest gap --iteration Q1
   spectest run --iteration Q1 --suite TS-123456

@@ -89,10 +89,17 @@ export function findIterationDir(projectRoot: string, iteration: string): string
 // 扫描索引：功能单元 × 端
 // ============================================================
 
-export function scanSpecIndex(projectRoot: string, iteration: string): SpecIndex {
+export function scanSpecIndex(
+  projectRoot: string, iteration: string, externalSpecDir?: string
+): SpecIndex {
+  // 独立输入通道：--spec-dir 自备规格目录（与 020-specs 同构，不依赖 SpecCore 迭代目录）
+  if (externalSpecDir) {
+    return scanExternalSpecDir(externalSpecDir, iteration);
+  }
+
   const iterationDir = findIterationDir(projectRoot, iteration);
   if (!iterationDir) {
-    throw new Error(`期次 ${iteration} 不存在。请在 SpecCore 项目中确认迭代目录（Iteration-NNN-xxx/）。`);
+    throw new Error(`期次 ${iteration} 不存在。请在 SpecCore 项目中确认迭代目录（Iteration-NNN-xxx/），或用 --spec-dir 指定自备规格目录。`);
   }
 
   const specsDir = path.join(iterationDir, '020-specs');
@@ -100,6 +107,34 @@ export function scanSpecIndex(projectRoot: string, iteration: string): SpecIndex
     throw new Error(`期次 ${iteration} 缺少 020-specs/ 目录，规格尚未生成。`);
   }
 
+  return { iteration, iterationDir, specsDir, entries: scanUnits(specsDir) };
+}
+
+/**
+ * 扫描外部规格目录（--spec-dir 独立输入通道）
+ *
+ * 入口两种形态（自动识别）：
+ *   1. 020-specs 等价目录：{specDir}/{功能单元}/{端名}/TEST.md
+ *   2. 迭代目录本身（含 020-specs 子目录）→ 自动进一层
+ * 目录约定与 SpecCore 020-specs 完全一致；AC 缺失/空骨架照旧报"规格缺口"，不脑补。
+ */
+export function scanExternalSpecDir(specDirRaw: string, iteration: string): SpecIndex {
+  const abs = path.resolve(specDirRaw);
+  if (!fs.existsSync(abs) || !fs.statSync(abs).isDirectory()) {
+    throw new Error(`规格目录不存在：${specDirRaw}。期望结构 {目录}/{功能单元}/{端名}/TEST.md。`);
+  }
+
+  let specsDir = abs;
+  const nested = path.join(abs, '020-specs');
+  if (fs.existsSync(nested) && fs.statSync(nested).isDirectory()) {
+    specsDir = nested;
+  }
+
+  return { iteration, iterationDir: path.dirname(specsDir), specsDir, entries: scanUnits(specsDir) };
+}
+
+/** 扫描 {specsDir}/{功能单元}/{端名}/ 平铺索引（020-specs 与外部目录共用） */
+function scanUnits(specsDir: string): PlatformSpec[] {
   const entries: PlatformSpec[] = [];
   const unitDirs = fs.readdirSync(specsDir, { withFileTypes: true })
     .filter((e) => e.isDirectory() && !SKIP_DIRS.has(e.name));
@@ -113,8 +148,7 @@ export function scanSpecIndex(projectRoot: string, iteration: string): SpecIndex
       entries.push(readPlatformSpec(unit.name, p.name, unitDir));
     }
   }
-
-  return { iteration, iterationDir, specsDir, entries };
+  return entries;
 }
 
 function readPlatformSpec(unitName: string, platform: string, unitDir: string): PlatformSpec {

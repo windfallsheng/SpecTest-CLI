@@ -104,28 +104,24 @@ spectest run
 | **阶段** | 测试层级（unit/integration/system/acceptance）× 发布时机（dev/pr/sit/deploy/uat/release）正交融合 |
 | **环境** | 环境分级（dev 全量/staging 冒烟+回归/prod 仅冒烟）+ 健康预检 |
 
-**SIT**（技术集成视角，高度自动化）：跨端联调用例 + 契约执行器全量跑 + 独立 sit 环境。
-**UAT**（业务验收视角，半自动化）：生成验收剧本 + AC 勾选清单 + 人工执行签字。UAT 缺陷多是规格缺陷，走规格缺陷反馈通道回流 SpecProt。UAT sign-off 是 release 前置条件（闸 3 扩展）。
+**SIT**（技术集成视角，高度自动化）：跨端联调用例 + 契约执行器全量跑 + 独立 sit 环境——以 `--env` 环境矩阵 + 契约执行器落地。
+**UAT**（业务验收视角，半自动化）：⚠️ **设计待实装**（见 §11 路线图 Step 8）——生成验收剧本 + AC 勾选清单 + 人工执行签字。UAT 缺陷多是规格缺陷，走规格缺陷反馈通道回流 SpecProt。UAT sign-off 是 release 前置条件（闸 3 扩展）。
 
-## 8. 流水线：预设 + 三态 + 双模式
+## 8. 流水线：三层链 + 双模式（已实装）
 
-```
-test-dev      init → gen → gap → run(dev) → gate(loose)
-test-sit      verify → contract-run(sit) → gap → gate(normal)
-test-uat      uat剧本 → 人工执行 → 签字 → signoff记录
-test-release  verify → run(全量回归) → gate(strict) → report
-```
+`spectest run` 就是流水线执行器（与 speccore run 同构）：三层链「静态验证 → 契约执行 → 宿主框架」，先轻后重、失败即停。缺省期次 = 全量回归（跨期次逐期推进三层链，用例资产全量层、事实按期次回填）。
 
-- **三态开关**：每节点 auto/on/off。
-- **全自动模式**：节点间不停，但四类节点强制停——范围确认、门禁失败、执行失败、UAT 签字。**全自动下 AI 产物由 CLI 门禁把关替代人眼**。
-- **人机交互模式**（默认）：每节点展示意图 + 待确认清单。
+- **全自动模式**：层间不停；未接入宿主框架不算绿（防假绿，三层链只跑两层时如实报非零）。
+- **人机交互模式**（`--interactive` 或 `config.pipeline.interactive`）：每层确认后推进。
 - **机制**：状态快照 `[SPECTEST_STEP_DONE]` + `--resume` 断点续跑 + `[SPECTEST_EXEC]` 接力标记 + 单会话步骤隔离。
+
+> ⚠️ 预设流水线（test-dev/test-sit/test-uat/test-release）与三态开关（auto/on/off）**设计待实装**，见 §11 路线图 Step 8。
 
 ## 9. 端级针对性 + Agent 角色
 
 **三层定制**：端专属 zod schema（backend: transactionBoundary/idempotency/concurrency；h5: selector/viewport/stateFlow；miniapp: lifecycle/platform；app: deviceMatrix/network）+ 端专属 prompt 模板 + 端专属检查清单（CLI 校验打回）。
 
-**Agent 角色**（`.spectest/AGENTS/`，接力时注入）：test-designer、api-test-specialist、e2e-test-specialist、test-data-architect、performance-test-analyst、security-test-reviewer、test-reviewer。
+**Agent 角色**（`.spectest/AGENTS/`，接力时注入）：⚠️ **设计待实装**（见 §11 路线图 Step 8）——test-designer、api-test-specialist、e2e-test-specialist、test-data-architect、performance-test-analyst、security-test-reviewer、test-reviewer。
 
 **前端 E2E**：从 UI_SPEC 装配元素标识（extractElementTestIds，移植 v8.3.291 冒烟装配链）+ 状态图场景路径 → 用例骨架。UI_SPEC 缺元素标识报"元素标识缺口"，不脑补选择器。
 
@@ -154,3 +150,15 @@ Step 7  度量反馈  report/summary/trend/archive（骨架门卫）+ bug 双类
 ```
 
 **现有代码三分类**：保留（context 数据层、zod schemas、api-test-generator 契约解析、logger、i18n）；重构（spec-reader 坐标、gen 纯确定性生成、时间戳 ID）；新增（trace-matrix、predicates、skeleton-builder、contract-runner、pipeline）。渐进替换，不搞大爆炸。
+
+```
+Step 8  补缺     --spec-dir 独立输入通道（gen 自备规格目录）
+                 miniapp 端专属 prompt 模板
+                 init 自动生成环境模板（environments/{env}.yaml）
+                 动态 token 链（登录→提取→注入后续请求）
+                 预设流水线 test-dev/sit/uat/release + 三态开关 auto/on/off
+                 UAT 验收剧本 + 签字 sign-off（闸 3 扩展）
+                 Agent 角色体系（.spectest/AGENTS/ 七角色，接力注入）
+                 UI 冒烟统一入口（框架层 P0 切片）
+                 性能/安全类型执行节点（生成支持、执行靠宿主调度）
+```

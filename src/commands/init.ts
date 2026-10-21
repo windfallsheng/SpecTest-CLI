@@ -58,6 +58,9 @@ export async function initCommand(options: InitOptions): Promise<void> {
     // 创建初始配置
     createConfig(spectestDir, iteration);
 
+    // 生成环境模板（契约执行上手零门槛，baseUrl 留待用户填写）
+    createEnvironmentTemplate(spectestDir);
+
     spinner.stop(`✅ ${i18n.t('cmd.init.success')}`);
     showNextSteps(iteration);
   } catch (error) {
@@ -96,12 +99,21 @@ function detectIteration(projectRoot: string): string | undefined {
  * 创建目录结构
  */
 function createDirectoryStructure(baseDir: string, iteration: string): void {
+  // 与 ARCHITECTURE §4 对齐：全量层用例资产 + 迭代层执行事实
   const dirs = [
     baseDir,
     path.join(baseDir, 'local'),
-    path.join(baseDir, 'tests', iteration),
-    path.join(baseDir, 'reports'),
+    path.join(baseDir, 'environments'),
+    path.join(baseDir, 'fixtures'),
     path.join(baseDir, 'templates'),
+    path.join(baseDir, 'reports'),
+    path.join(baseDir, 'plans'),
+    path.join(baseDir, 'bugs'),
+    path.join(baseDir, 'GLOBAL', 'cases'),
+    path.join(baseDir, 'archive'),
+    path.join(baseDir, 'trend'),
+    // 迭代层 matrix 由 trace-matrix 按需幂等创建，init 只建期次锚点
+    path.join(baseDir, 'iterations', iteration),
   ];
 
   for (const dir of dirs) {
@@ -131,6 +143,30 @@ function createConfig(baseDir: string, iteration: string): void {
     `  defaultEnv: ${config.pipeline.defaultEnv}\n`,
     'utf-8'
   );
+}
+
+/**
+ * 生成环境模板：environments/test.yaml（baseUrl 留空位，供契约执行 --env test 使用）
+ */
+function createEnvironmentTemplate(baseDir: string): void {
+  const envFile = path.join(baseDir, 'environments', 'test.yaml');
+  if (fs.existsSync(envFile)) return; // 幂等：用户已填写的环境不覆盖
+
+  const content = [
+    '# 测试环境配置（契约执行 target：spectest run --env test）',
+    '# baseUrl 为契约执行目标基址，替换为真实服务地址后生效',
+    '# 更多环境：复制本文件为 {env}.yaml（如 sit.yaml），--env sit 切换',
+    'baseUrl: http://localhost:8080  # TODO: 替换为真实服务地址',
+    'timeoutMs: 5000',
+    '# 公共请求头：支持 ${VAR} 环境变量占位（执行时从 process.env 解析，缺变量如实报缺）',
+    'headers:',
+    '  Content-Type: application/json',
+    "  # Authorization: Bearer ${TOKEN}",
+    '',
+  ].join('\n');
+
+  fs.writeFileSync(envFile, content, 'utf-8');
+  logger.info(`📄 已生成环境模板：.spectest/environments/test.yaml（baseUrl 待填写）`);
 }
 
 /**

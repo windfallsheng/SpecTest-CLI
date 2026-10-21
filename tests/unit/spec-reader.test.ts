@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   extractAC, normalizeACId, buildSuiteId, buildCaseId, slugify,
-  findIterationDir, scanSpecIndex,
+  findIterationDir, scanSpecIndex, scanExternalSpecDir,
 } from '../../src/core/spec-reader';
 
 describe('extractAC 双格式兼容', () => {
@@ -66,5 +66,59 @@ describe('scanSpecIndex 真实坐标（SpecCore 迭代项目）', () => {
     expect(idx.entries.length).toBeGreaterThan(0);
     // Iteration-002 的 TEST.md 均为 SPEC-SKELETON 残留，应全部标记缺口
     expect(idx.entries.every((e) => e.isSkeleton)).toBe(true);
+  });
+});
+
+describe('scanExternalSpecDir（--spec-dir 独立输入通道）', () => {
+  const { mkdtempSync, mkdirSync, writeFileSync } = require('fs-extra');
+  const os = require('os');
+  const path = require('path');
+
+  function makeSpecTree() {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'spectest-specdir-'));
+    const unitDir = path.join(root, 'yudingguanli', 'h5-mobile');
+    mkdirSync(unitDir, { recursive: true });
+    writeFileSync(
+      path.join(unitDir, 'TEST.md'),
+      '- [ ] AC-1: 用户正常下单\n- [ ] AC-2: 库存不足时下单失败\n',
+      'utf-8'
+    );
+    return root;
+  }
+
+  it('形态一：直接给 020-specs 等价目录 → 扫出单元 × 端', () => {
+    const root = makeSpecTree();
+    const index = scanExternalSpecDir(root, 'Ext-001');
+    expect(index.entries).toHaveLength(1);
+    expect(index.entries[0].unitName).toBe('yudingguanli');
+    expect(index.entries[0].platform).toBe('h5-mobile');
+    expect(index.entries[0].acs.map((a) => a.id)).toEqual(['AC-001', 'AC-002']);
+    expect(index.entries[0].isSkeleton).toBe(false);
+  });
+
+  it('形态二：给迭代目录（含 020-specs 子目录）→ 自动进一层', () => {
+    const root = makeSpecTree();
+    const iterRoot = mkdtempSync(path.join(os.tmpdir(), 'spectest-iter-'));
+    const srcSpecs = path.join(root);
+    const dstSpecs = path.join(iterRoot, '020-specs');
+    mkdirSync(path.dirname(dstSpecs), { recursive: true });
+    require('fs-extra').copySync(srcSpecs, dstSpecs);
+    const index = scanExternalSpecDir(iterRoot, 'Ext-002');
+    expect(index.entries).toHaveLength(1);
+    expect(index.entries[0].unitName).toBe('yudingguanli');
+  });
+
+  it('目录不存在 → 报缺不脑补（抛错带期望结构）', () => {
+    expect(() => scanExternalSpecDir('/nonexistent/spec/dir', 'Ext-003')).toThrow(/规格目录不存在/);
+  });
+
+  it('空骨架（SPEC-SKELETON 残留）→ 标记规格缺口', () => {
+    const root = makeSpecTree();
+    const unitDir = path.join(root, 'kongdanwei', 'backend');
+    mkdirSync(unitDir, { recursive: true });
+    writeFileSync(path.join(unitDir, 'TEST.md'), '<!-- SPEC-SKELETON -->\n', 'utf-8');
+    const index = scanExternalSpecDir(root, 'Ext-004');
+    const gap = index.entries.find((e) => e.unitName === 'kongdanwei');
+    expect(gap?.isSkeleton).toBe(true);
   });
 });

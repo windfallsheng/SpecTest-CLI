@@ -28,6 +28,8 @@ export interface SkeletonOptions {
   unit?: string;
   /** 测试类型，默认 unit */
   testType?: TestTypeName;
+  /** 独立输入通道：自备规格目录（与 020-specs 同构），缺省走 SpecCore 迭代目录 */
+  specDir?: string;
 }
 
 /** 预建好的一个套件骨架 */
@@ -128,7 +130,7 @@ export function prebuildSuites(
     console.log(`🗄️  双份套件已备份旧目录（.legacy-*）：${migrated.backedUp.join('、')}`);
   }
 
-  const index = scanSpecIndex(projectRoot, iteration);
+  const index = scanSpecIndex(projectRoot, iteration, opts.specDir);
   const prepared: PreparedSuite[] = [];
   const specGaps: SkeletonResult['specGaps'] = [];
 

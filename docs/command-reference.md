@@ -1,6 +1,6 @@
 # 命令参考
 
-> 全部 17 个命令的参数与示例。`spectest <命令> --help` 可随时查看。
+> 全部 21 个命令（含 bug 子命令）的参数与示例。`spectest <命令> --help` 可随时查看。
 
 ## 全局选项
 
@@ -23,7 +23,7 @@ spectest ask --list     # 列出全部支持的意图类型
 
 ## init — 初始化测试项目
 
-在 SpecCore 项目内创建 `.spectest/`（含 config.yaml、environments、templates、reports 等）。
+在 SpecCore 项目内创建 `.spectest/`（含 config.yaml、GLOBAL 用例库、迭代层锚点，并自动生成 `environments/test.yaml` 环境模板——baseUrl 留待填写）。
 
 | 选项 | 说明 |
 |:---|:---|
@@ -47,12 +47,14 @@ spectest ask --list     # 列出全部支持的意图类型
 | `-p, --platform <platform>` | 端名过滤（标准端名） |
 | `-u, --unit <unit>` | 功能单元过滤（slug 或单元名） |
 | `-t, --type <type>` | 测试类型：unit / integration / e2e / api / performance / security（默认 unit） |
+| `--spec-dir <path>` | 独立输入通道：自备规格目录（`{单元}/{端名}/TEST.md`，与 020-specs 同构；给迭代目录自动进 `020-specs/` 层） |
 | `--apply` | 回写模式：zod 校验 + 矩阵登记 + 索引重建 |
 
 ```bash
 spectest gen -i Q1                    # 预建骨架 → [SPECTEST_PROMPT] → exitCode 10
 spectest gen -i Q1 --apply            # AI 写好用例后回写校验
 spectest gen -i Q1 --type api         # 按类型过滤
+spectest gen -i Q1 --spec-dir ./my-specs   # 不依赖 SpecCore 迭代目录，读自备规格
 ```
 
 ## api — 从 API 契约生成接口测试
@@ -148,6 +150,15 @@ spectest visual-review -i Q1 --image base.png --image diff.png --question "两�
 判定：PASS / FAIL / unknown；审查记录落盘迭代层 `matrix/visual/REVIEW-*.json`（执行事实按期次记账）。
 
 ## impact — 变更影响分析
+
+| 选项 | 说明 |
+|:---|:---|
+| `-i, --iteration <name>` | 期次名称 |
+| `-t, --task <id>` | 按变更 Task ID 圈定影响范围 |
+
+## verify — 文档静态验证（gate 第一道闸）
+
+零成本内置检查：AC 格式完整性（骨架缺口）、每条 AC 有证、用例四段齐全、端级专项（backend 事务/幂等/并发、h5 选择器/视口/状态流转、app 机型/弱网）、API_CONTRACT 与 TECH.md 接口一致性。
 
 | 选项 | 说明 |
 |:---|:---|

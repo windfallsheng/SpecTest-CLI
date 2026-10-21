@@ -1,5 +1,27 @@
 # 更新日志
 
+## 0.4.0（2026-10-21）
+
+### 新功能
+
+- `gen` 新增 `--spec-dir` 独立输入通道：自备规格目录（`{单元}/{端名}/TEST.md`，与 020-specs 同构；给迭代目录自动进 `020-specs/` 层）——SpecTest 不依赖 SpecCore 迭代目录即可消费规格，AC 缺失/空骨架照旧报缺不脑补
+- 新增 miniapp 端专属 prompt 模板（生命周期 / 平台矩阵 / 分包 / 授权 / 登录态 / 缓存 / 分享回流 / 版本兼容），补齐端级定制五模板
+- `init` 自动生成 `environments/test.yaml` 环境模板（baseUrl 留待填写），上手契约执行零门槛；目录结构对齐双层语义（GLOBAL/cases 全量层 + iterations 迭代层），废弃旧 `tests/{期次}` 目录
+
+### 修复
+
+- `--help` 帮助文本补齐遗漏的 4 个命令（contract-run / visual-review / verify / export），命令编号与注册顺序对齐
+- docs/command-reference.md：新增 verify 小节、gen --spec-dir 参数、impact 参数表修正（误标 -p/-u），命令总数更新
+
+### 文档
+
+- ARCHITECTURE.md 收敛：未实装的预设流水线 / 三态开关 / UAT 签字 / Agent 角色体系如实标注「设计待实装」，下移 §11 路线图 Step 8——文档与实现对齐，不立空头支票
+
+### 测试
+
+- 补齐心脏部位保险丝：static-verify / contract-runner / framework-run / gate-checker 四个此前无测试的核心模块新增 25 个单元测试（含本地 HTTP server 驱动的契约执行真实验证），全量 177 个测试全绿
+
+
 ## 0.3.3（2026-10-08）
 
 - 负责人解析新增第三事实源：SpecCore 单元级声明（`010-requirements/features/{单元}/_matrix.md` owners 段 confirmed）——配合 SpecCore v8.3.302 负责人前置设计，gen 阶段即确定，不依赖 taskify 时序

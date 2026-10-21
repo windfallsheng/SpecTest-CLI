@@ -20,6 +20,8 @@ export interface ApplyOptions {
   platform?: string;
   unit?: string;
   testType?: string;
+  /** 独立输入通道：与 gen 模式一相同的自备规格目录 */
+  specDir?: string;
 }
 
 export interface ApplyResult {
@@ -45,7 +47,7 @@ export function applyGeneratedCases(
   }
 
   // spec 索引（用于矩阵兜底重建与 unitName 解析）
-  const specIndex = scanSpecIndex(projectRoot, iteration);
+  const specIndex = scanSpecIndex(projectRoot, iteration, opts.specDir);
 
   for (const s of suites) {
     const suite = readSuite(s.dir);
